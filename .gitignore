@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+ENV/
+
+# Base de datos local (archivos SQLite de desarrollo/runtime)
+*.db
+*.sqlite
+*.sqlite3
+venus.db
+
+# Pruebas, Cobertura y Linter Cache
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Cachés de Frameworks / UI
+.flet/
+
+# Variables de entorno (secretos y configuración local)
+.env
+.env.*
+!.env.example
+
+# IDEs y Editores
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Uploads (archivos subidos por los usuarios en runtime)
+uploads/*
+!uploads/.gitkeep
+
+# Logs y temporales
+*.log
+*.tmp
+*.temp
+
+# Documentación interna / Planes temporales de desarrollo (.md no necesarios en producción)
+plan_implementacion.md
+front_implementacion.md
+vulnerabilidades.md
+implementation_plan.md
+walkthrough.md
+*_plan.md
+
+# Alembic
+alembic/versions/__pycache__/
+
+# Sistema Operativo
+Thumbs.db
+.DS_Store

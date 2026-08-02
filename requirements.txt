@@ -1,0 +1,15 @@
+# Venus Backend — Dependencias
+fastapi
+uvicorn[standard]
+aiosqlite
+pydantic[email]
+pydantic-settings
+python-jose[cryptography]
+bcrypt
+python-multipart
+Pillow
+
+# ── Dev / Tests ──
+pytest
+pytest-asyncio
+httpx
