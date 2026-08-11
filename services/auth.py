@@ -11,9 +11,12 @@ Cambios (Fase 4 — Guards de permisos granulares):
     El admin siempre tiene acceso total sin consultar la tabla de permisos.
 """
 
+import base64
+import io
 import json
+import os
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 import aiosqlite
 import bcrypt
@@ -21,11 +24,176 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 
+import pyotp
+import qrcode
+
+try:
+    import geoip2.database
+    _HAS_GEOIP = True
+except ImportError:
+    _HAS_GEOIP = False
+
 from config import settings
 from database import get_db
 
 # OAuth2 scheme para extraer el token del header Authorization
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
+# ---------------------------------------------------------------------------
+# Rate Limiter de Inicios de Sesión (En Memoria - Opción 1B)
+# ---------------------------------------------------------------------------
+class LoginRateLimiter:
+    """Gestiona el contador de intentos fallidos y bloqueos de cuenta en memoria."""
+
+    def __init__(self):
+        self._failed_attempts: dict[str, int] = {}
+        self._locked_until: dict[str, datetime] = {}
+
+    def is_locked(self, username: str) -> Tuple[bool, int]:
+        """
+        Retorna (True, segundos_restantes) si la cuenta está bloqueada.
+        Limpia automáticamente si el tiempo de bloqueo ya expiró.
+        """
+        user_key = username.lower().strip()
+        until = self._locked_until.get(user_key)
+        if until:
+            now = datetime.now(timezone.utc)
+            if now < until:
+                remaining_seconds = int((until - now).total_seconds())
+                return True, max(1, remaining_seconds)
+            else:
+                # El tiempo expiro, liberar bloqueo
+                del self._locked_until[user_key]
+                self._failed_attempts[user_key] = 0
+        return False, 0
+
+    def record_failed_attempt(self, username: str) -> Tuple[int, bool, int]:
+        """
+        Registra un intento fallido para el usuario.
+        Retorna: (intentos_acumulados, se_bloqueo_ahora, segundos_bloqueo)
+        """
+        user_key = username.lower().strip()
+        current = self._failed_attempts.get(user_key, 0) + 1
+        self._failed_attempts[user_key] = current
+
+        if current >= settings.MAX_FAILED_LOGIN_ATTEMPTS:
+            return current, True, settings.ACCOUNT_LOCKOUT_MINUTES * 60
+        return current, False, 0
+
+    def lock_account(self, username: str, minutes: int = settings.ACCOUNT_LOCKOUT_MINUTES) -> int:
+        """
+        Fuerza un bloqueo inmediato de la cuenta por 'minutes' minutos.
+        Utilizado para la regla Anti-Ingeniería Inversa (envío de OTP sin solicitar).
+        Retorna la cantidad de segundos bloqueados.
+        """
+        user_key = username.lower().strip()
+        lock_until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+        self._locked_until[user_key] = lock_until
+        self._failed_attempts[user_key] = settings.MAX_FAILED_LOGIN_ATTEMPTS
+        return minutes * 60
+
+    def reset_attempts(self, username: str) -> None:
+        """Resetea el contador de intentos fallidos y bloqueos para un usuario."""
+        user_key = username.lower().strip()
+        self._failed_attempts.pop(user_key, None)
+        self._locked_until.pop(user_key, None)
+
+    def get_failed_attempts(self, username: str) -> int:
+        """Retorna la cantidad actual de intentos fallidos registrados."""
+        user_key = username.lower().strip()
+        return self._failed_attempts.get(user_key, 0)
+
+
+# Instancia global del rate limiter en memoria
+rate_limiter = LoginRateLimiter()
+
+
+# ---------------------------------------------------------------------------
+# Autenticación de Dos Factores (TOTP / QR)
+# ---------------------------------------------------------------------------
+def generate_totp_secret() -> str:
+    """Genera una clave secreta base32 para TOTP."""
+    return pyotp.random_base32()
+
+
+def generate_totp_qr(secret: str, username: str) -> Tuple[str, str]:
+    """
+    Genera el enlace otpauth:// y un código QR renderizado en una imagen Base64 PNG.
+    Retorna (qr_code_base64_data_uri, otpauth_url).
+    """
+    totp = pyotp.TOTP(secret)
+    otpauth_url = totp.provisioning_uri(name=username, issuer_name=settings.TOTP_ISSUER)
+
+    # Generar QR
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=6,
+        border=4,
+    )
+    qr.add_data(otpauth_url)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill_color="black", back_color="white")
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    qr_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    data_uri = f"data:image/png;base64,{qr_b64}"
+
+    return data_uri, otpauth_url
+
+
+def verify_totp_code(secret: str, code: str) -> bool:
+    """Verifica si un código OTP de 6 dígitos es válido para la clave secreta dada."""
+    if not secret or not code:
+        return False
+    totp = pyotp.TOTP(secret)
+    # Permite ventana de tolerancia de 1 paso previo/posterior (30 seg)
+    return totp.verify(code.strip(), valid_window=1)
+
+
+# ---------------------------------------------------------------------------
+# Geolocalización de IP (Smart Login / Detección de IP Sospechosa)
+# ---------------------------------------------------------------------------
+def is_suspicious_ip(ip_address: Optional[str]) -> bool:
+    """
+    Verifica si una dirección IP proviene de un país no autorizado o es sospechosa.
+
+    Considera seguras (no sospechosas):
+    - IPs locales o de bucle invertido (127.0.0.1, ::1, 10.x.x.x, 192.168.x.x, 172.16.x.x-172.31.x.x).
+    - IPs de países listados en settings.ALLOWED_COUNTRY_CODES.
+    """
+    if not ip_address:
+        return False
+
+    ip = ip_address.strip()
+
+    # IPs locales / privadas son confiables por definición
+    if (
+        ip in ("127.0.0.1", "::1", "localhost")
+        or ip.startswith("10.")
+        or ip.startswith("192.168.")
+        or ip.startswith("172.16.") or ip.startswith("172.17.")
+        or ip.startswith("172.18.") or ip.startswith("172.19.")
+        or ip.startswith("172.20.") or ip.startswith("172.30.")
+        or ip.startswith("172.31.")
+    ):
+        return False
+
+    # Si existe base de datos GeoIP y la librería está cargada
+    if _HAS_GEOIP and os.path.exists(settings.GEOIP_DB_PATH):
+        try:
+            with geoip2.database.Reader(settings.GEOIP_DB_PATH) as reader:
+                response = reader.country(ip)
+                country_code = response.country.iso_code
+                if country_code and country_code not in settings.ALLOWED_COUNTRY_CODES:
+                    return True  # IP proviene de país fuera del permitido -> Sospechosa
+                return False
+        except Exception:
+            pass  # En caso de IP no encontrada en BD, fallback a seguro o según regla
+
+    return False
 
 
 # ---------------------------------------------------------------------------

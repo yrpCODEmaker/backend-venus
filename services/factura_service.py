@@ -202,12 +202,17 @@ async def create_factura(
             cliente_id_remote = row[0]
 
         # --- Paso 2: INSERT factura ---
-        saldo = data.total - data.monto_pagado
+        pago_parcial_val = getattr(data, "pago_parcial", 0)
+        if pago_parcial_val == 0:
+            monto_pagado_effective = data.total
+            saldo = 0.0
+        else:
+            monto_pagado_effective = float(data.monto_pagado)
+            saldo = max(0.0, data.total - monto_pagado_effective)
 
         # Serializar cliente: si es factura rapida, asegurar estructura {nombre, apellido, telefono}
         cliente_json = None
         if data.cliente:
-            # ClienteRapidoSchema ya garantiza la estructura correcta
             cliente_dict = {
                 "nombre": data.cliente.nombre,
                 "apellido": data.cliente.apellido or "",
@@ -221,28 +226,29 @@ async def create_factura(
                 id, cliente_id, cliente, fecha, total, monto_pagado,
                 saldo_pendiente, items_id, entrega_domicilio,
                 direccion_entrega, estatus_entrega, garantia_hasta,
-                status_garantia, facturacion_rapida, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'No Aplica', ?, ?)
+                status_garantia, facturacion_rapida, pago_parcial, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, 'No Aplica', ?, ?, ?)
             """,
             (
                 factura_id, cliente_id_remote, cliente_json, now,
-                data.total, data.monto_pagado, saldo,
+                data.total, monto_pagado_effective, saldo,
                 int(data.entrega_domicilio), data.direccion_entrega,
                 "No Aplica", data.garantia_hasta,
-                data.facturacion_rapida, now,
+                data.facturacion_rapida, pago_parcial_val, now,
             ),
         )
 
         # --- Paso 3: Pago inicial ---
         pago_id = None
-        if data.monto_pagado > 0:
+        if monto_pagado_effective > 0:
             pago_id = _gen_id(prefix)
+            pago_nota = "Pago completo inicial" if pago_parcial_val == 0 else "Pago parcial inicial"
             await db.execute(
                 """
                 INSERT INTO pagos (id, factura_id, monto, fecha, nota, created_at)
-                VALUES (?, ?, ?, ?, 'Pago inicial', ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (pago_id, factura_id, data.monto_pagado, now, now),
+                (pago_id, factura_id, monto_pagado_effective, now, pago_nota, now),
             )
 
         # --- Paso 4: Items ---
@@ -349,18 +355,50 @@ async def create_factura(
             if not item_nombre:
                 item_nombre = "Ítem sin nombre"
 
+            # Validar existencia de referencias FK para evitar violaciones de clave foránea
+            if image_id_remote:
+                cands_img = _id_candidates(str(image_id_remote))
+                ph_img = ",".join(["?"] * len(cands_img))
+                c_img = await db.execute(
+                    f"SELECT id FROM images WHERE id IN ({ph_img})",
+                    cands_img,
+                )
+                img_row = await c_img.fetchone()
+                if img_row:
+                    image_id_remote = img_row[0]   # usar el ID exacto que está en la BD
+                else:
+                    image_id_remote = None
+
+            if catalogo_id_remote:
+                c_cat = await db.execute("SELECT id FROM catalogo WHERE id = ?", (catalogo_id_remote,))
+                if not await c_cat.fetchone():
+                    catalogo_id_remote = None
+
+            if stock_id_remote:
+                c_stk = await db.execute("SELECT id FROM stock WHERE id = ?", (stock_id_remote,))
+                if not await c_stk.fetchone():
+                    stock_id_remote = None
+
+            raw_apoyo = getattr(item_data, "imagenes_apoyo", None)
+            if isinstance(raw_apoyo, list):
+                apoyo_json = json.dumps(raw_apoyo, ensure_ascii=False)
+            elif isinstance(raw_apoyo, str) and raw_apoyo.strip():
+                apoyo_json = raw_apoyo
+            else:
+                apoyo_json = "[]"
+
             await db.execute(
                 """
                 INSERT INTO items (
-                    id, factura_id, stock_id, catalogo_id, image_id,
+                    id, factura_id, stock_id, catalogo_id, image_id, imagenes_apoyo,
                     nombre, cantidad, tipo, subtotal, tela, material,
                     descripcion, area, tipo_mueble, status,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item_id, factura_id, stock_id_remote, catalogo_id_remote,
-                    image_id_remote, item_nombre, item_data.cantidad,
+                    image_id_remote, apoyo_json, item_nombre, item_data.cantidad,
                     item_data.tipo, item_data.subtotal, item_color,
                     item_material, item_descripcion,
                     item_area, item_tipo_mueble, item_status,
@@ -374,6 +412,7 @@ async def create_factura(
                 "stock_id": stock_id_remote,
                 "catalogo_id": catalogo_id_remote,
                 "image_id": image_id_remote,
+                "imagenes_apoyo": json.loads(apoyo_json) if apoyo_json else [],
                 "nombre": item_nombre,
                 "cantidad": item_data.cantidad,
                 "tipo": item_data.tipo,

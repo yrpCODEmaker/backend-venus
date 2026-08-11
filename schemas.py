@@ -32,16 +32,42 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # ===========================================================================
 
 class LoginRequest(BaseModel):
-    """Credenciales de login."""
+    """Credenciales de login con soporte para 2FA / OTP."""
     username: str
     password: str
+    otp_code: Optional[str] = None
 
 
 class TokenResponse(BaseModel):
     """Respuesta del endpoint de login."""
-    access_token: str
+    access_token: Optional[str] = None
     token_type: str = "bearer"
-    expires_in: int
+    expires_in: Optional[int] = None
+    requires_otp: bool = False
+    message: Optional[str] = None
+
+
+class TwoFactorSetupResponse(BaseModel):
+    """Respuesta con secreto y QR para configurar 2FA."""
+    secret: str
+    qr_code_base64: str
+    otpauth_url: str
+
+
+class TwoFactorVerifyRequest(BaseModel):
+    """Payload para activar o verificar 2FA."""
+    otp_code: str
+
+
+class TwoFactorDisableRequest(BaseModel):
+    """Payload para desactivar 2FA."""
+    password: Optional[str] = None
+    otp_code: Optional[str] = None
+
+
+class TwoFactorStatusResponse(BaseModel):
+    """Estado de 2FA del usuario."""
+    enabled: bool
 
 
 class UserOut(BaseModel):
@@ -209,7 +235,7 @@ class ImageIn(BaseSyncIn):
           - Sin rutas UNC (\\\\server).
           - Sin caracteres de control ni null bytes.
         """
-        if not v:
+        if v is None or not str(v).strip():
             raise ValueError("file_path no puede estar vacío")
 
         # Null bytes y caracteres de control
@@ -280,6 +306,7 @@ class FacturaIn(BaseSyncIn):
     facturacion_rapida: int = 0
     declarado_perdida: int = 0
     declarado_perdonado: int = 0
+    pago_parcial: int = 0
 
 
 class PagoIn(BaseModel):
@@ -399,8 +426,8 @@ class ClienteRapidoSchema(BaseModel):
     cliente ocasional sin registrarlo en la tabla de clientes.
     """
     nombre: str = Field(..., min_length=1, description="Nombre del cliente ocasional")
-    apellido: str = Field(default="", description="Apellido del cliente (puede estar vacío)")
-    telefono: str = Field(default="", description="Teléfono del cliente (puede estar vacío)")
+    apellido: Optional[str] = Field(default="", description="Apellido del cliente (puede estar vacío)")
+    telefono: Optional[str] = Field(default="", description="Teléfono del cliente (puede estar vacío)")
 
 
 class FacturaCreateItemIn(BaseModel):
@@ -408,6 +435,7 @@ class FacturaCreateItemIn(BaseModel):
     stock_id: Optional[str] = None
     catalogo_id: Optional[str] = None
     image_id: Optional[str] = None
+    imagenes_apoyo: Optional[Union[List[str], str]] = Field(default_factory=list)
     nombre: Optional[str] = None
     cantidad: int = Field(..., ge=1)
     tipo: str  # 'encargo' | 'stock'
@@ -445,6 +473,7 @@ class FacturaCreateIn(BaseModel):
     direccion_entrega: Optional[str] = None
     garantia_hasta: str = "Sin Garantía"
     facturacion_rapida: int = 0
+    pago_parcial: int = 0
 
     @model_validator(mode="after")
     def validar_cliente_obligatorio(self) -> "FacturaCreateIn":
@@ -475,6 +504,16 @@ class FacturaUpdateIn(BaseModel):
     direccion_entrega: Optional[str] = None
     garantia_hasta: Optional[str] = None
     estatus_entrega: Optional[str] = None
+    pago_parcial: Optional[int] = None
+
+
+class EmpresaConfigIn(BaseModel):
+    """Configuración comercial de la empresa guardada en company_config.json."""
+    nombre: Optional[str] = None
+    rnc: Optional[str] = None
+    telefono: Optional[str] = None
+    ubicacion: Optional[str] = None
+    logo_path: Optional[str] = None
 
 
 class ItemUpdateIn(BaseModel):
@@ -483,11 +522,13 @@ class ItemUpdateIn(BaseModel):
     material: Optional[str] = None
     descripcion: Optional[str] = None
     subtotal: Optional[float] = None
+    imagenes_apoyo: Optional[Union[List[str], str]] = None
 
 
 class ItemPhotoUpdate(BaseModel):
     """Actualizar la foto de referencia de un ítem."""
     image_id: str
+    imagenes_apoyo: Optional[Union[List[str], str]] = None
 
 
 class ItemAddIn(BaseModel):
@@ -495,6 +536,7 @@ class ItemAddIn(BaseModel):
     stock_id: Optional[str] = None
     catalogo_id: Optional[str] = None
     image_id: Optional[str] = None
+    imagenes_apoyo: Optional[Union[List[str], str]] = Field(default_factory=list)
     nombre: str
     cantidad: int = Field(..., ge=1)
     tipo: str

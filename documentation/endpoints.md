@@ -2,7 +2,7 @@
 
 Esta documentación describe la API REST completa de Venus Backend (FastAPI + SQLite WAL), organizada por módulos funcionales, con sus tipos de datos, cuerpos de solicitud, parámetros y respuestas.
 
-> **Última actualización:** Fase 6 — Implementación de permisos granulares por módulo.
+> **Última actualización:** Fase 7 — Endpoints de descarga de facturas en PDF y PNG.
 
 ---
 
@@ -196,26 +196,112 @@ Esta documentación describe la API REST completa de Venus Backend (FastAPI + SQ
 ## 2. Autenticación (`/api/v1/auth`)
 
 ### `POST` `/api/v1/auth/login`
-* **Resumen:** Login de Usuario
+* **Resumen:** Login de Usuario con Seguridad Avanzada (Rate Limit, 2FA, IP Inteligente)
 * **Descripción:** Autentica un usuario y retorna un Token JWT de acceso (Bearer).
+  * **Control de intentos:** Tras 3 intentos fallidos, bloquea la cuenta por 5 minutos si no tiene 2FA, o exige código OTP si tiene 2FA.
+  * **Regla Anti-Ingeniería Inversa:** Si se envía `otp_code` sin requerirse, bloquea la cuenta por 5 minutos.
+  * **Smart Login:** Exige OTP automáticamente si la IP del cliente proviene del exterior o es sospechosa.
 
-**Request Body:** `application/x-www-form-urlencoded`
-```form
-username=pichardo
-password=admin123
+**Request Body:** `application/x-www-form-urlencoded` o `application/json` (`LoginRequest`)
+```json
+{
+  "username": "pichardo",
+  "password": "admin123",
+  "otp_code": "123456"
+}
 ```
 
 **Respuestas:**
-- **200 OK**:
+- **200 OK (Autenticado):**
   ```json
   {
     "access_token": "eyJhbGci...",
     "token_type": "bearer",
-    "expires_in": 86400
+    "expires_in": 3600,
+    "requires_otp": false,
+    "message": "Inicio de sesión exitoso"
   }
   ```
-- **401 Unauthorized**: Credenciales incorrectas.
-- **403 Forbidden**: Cuenta desactivada.
+- **200 OK (Requiere OTP):**
+  ```json
+  {
+    "access_token": null,
+    "token_type": "bearer",
+    "expires_in": null,
+    "requires_otp": true,
+    "message": "Se requiere código de autenticación (OTP) de 6 dígitos."
+  }
+  ```
+- **401 Unauthorized:** Credenciales inválidas o código OTP incorrecto.
+- **403 Forbidden:** Cuenta desactivada.
+- **429 Too Many Requests:** Cuenta bloqueada por 5 minutos tras 3 intentos fallidos o por detección de ingeniería inversa.
+
+---
+
+### `POST` `/api/v1/auth/2fa/setup`
+* **Resumen:** Configurar 2FA / Generar QR
+* **Descripción:** Genera la clave secreta TOTP preliminar y el código QR en Base64 PNG para escanear en la app autenticadora.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Respuestas:**
+- **200 OK:**
+  ```json
+  {
+    "secret": "JBSWY3DPEHPK3PXP",
+    "qr_code_base64": "data:image/png;base64,iVBORw0KGgo...",
+    "otpauth_url": "otpauth://totp/Venus%20App:pichardo?secret=JBSWY3DPEHPK3PXP&issuer=Venus%20App"
+  }
+  ```
+
+---
+
+### `POST` `/api/v1/auth/2fa/enable`
+* **Resumen:** Activar 2FA
+* **Descripción:** Valida 1 código OTP generado por la app autenticadora para confirmar la sincronización y habilitar `totp_enabled = 1`.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request Body:** `application/json`
+```json
+{
+  "otp_code": "123456"
+}
+```
+
+**Respuestas:**
+- **200 OK:** `{"enabled": true}`
+- **400 Bad Request:** Código OTP inválido o no se ha llamado primero a `/2fa/setup`.
+
+---
+
+### `POST` `/api/v1/auth/2fa/disable`
+* **Resumen:** Desactivar 2FA
+* **Descripción:** Desactiva la autenticación de dos factores para el usuario.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Request Body:** `application/json`
+```json
+{
+  "password": "admin123"
+}
+```
+
+**Respuestas:**
+- **200 OK:** `{"enabled": false}`
+- **400 Bad Request:** Se requiere contraseña válida o código OTP para desactivar.
+
+---
+
+### `GET` `/api/v1/auth/2fa/status`
+* **Resumen:** Estado de 2FA
+* **Descripción:** Consulta si el usuario autenticado tiene activa la autenticación de dos factores.
+
+**Headers:** `Authorization: Bearer <token>`
+
+**Respuestas:**
+- **200 OK:** `{"enabled": true}`
 
 ---
 
@@ -389,6 +475,53 @@ password=admin123
 
 **Respuestas:**
 - **200 OK**: Factura despachada.
+
+---
+
+#### `GET` `/api/v1/facturas/{factura_id}/download/pdf`
+* **Resumen:** Descargar Factura en PDF
+* **Descripción:** Genera y descarga la factura como archivo PDF. La información de empresa (nombre, logo, teléfono, ubicación, RNC) se carga desde `company_config.json` en la raíz del proyecto. Si el campo `rnc` es `null` o vacío, no se menciona el RNC en la factura.
+* **Permiso requerido:** `facturas_ver`
+
+**Parámetros:**
+- `factura_id` [path] (string, Requerido): ID de la factura.
+
+**Respuestas:**
+- **200 OK**: Archivo PDF descargable.
+  - `Content-Type: application/pdf`
+  - `Content-Disposition: attachment; filename="factura_{id}.pdf"`
+- **401 Unauthorized**: Token no proporcionado o inválido.
+- **404 Not Found**: Factura no encontrada.
+
+---
+
+#### `GET` `/api/v1/facturas/{factura_id}/download/png`
+* **Resumen:** Descargar Factura en PNG
+* **Descripción:** Genera y descarga la factura como imagen PNG de alta resolución (150 DPI). Idéntica visualmente al PDF. La info de empresa se carga desde `company_config.json`.
+* **Permiso requerido:** `facturas_ver`
+
+**Parámetros:**
+- `factura_id` [path] (string, Requerido): ID de la factura.
+
+**Respuestas:**
+- **200 OK**: Imagen PNG descargable.
+  - `Content-Type: image/png`
+  - `Content-Disposition: attachment; filename="factura_{id}.png"`
+- **401 Unauthorized**: Token no proporcionado o inválido.
+- **404 Not Found**: Factura no encontrada.
+
+> **⚙️ Configuración de empresa para facturas:**
+> Edita `company_config.json` en la raíz del proyecto para cambiar el nombre, logo, teléfono, ubicación o RNC de la empresa sin modificar código.
+>
+> ```json
+> {
+>   "nombre": "Venus Muebles",
+>   "logo_path": null,
+>   "ubicacion": "Santo Domingo, RD",
+>   "telefono": "+1 (809) 000-0000",
+>   "rnc": null
+> }
+> ```
 
 ---
 

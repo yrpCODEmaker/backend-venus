@@ -317,7 +317,7 @@ class TestPushComplex:
             "images": [{
                 "local_id": 1,
                 "aspect_ratio": "16:9",
-                "file_path": "/local/sofa.jpg",
+                "file_path": "local/sofa.jpg",
                 "updated_at": "2026-07-16T12:00:00",
             }],
             "catalogo": [{

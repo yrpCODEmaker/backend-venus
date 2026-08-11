@@ -22,8 +22,10 @@ import os
 import uuid
 from typing import Optional
 
+from pathlib import Path
 import aiosqlite
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from config import settings
 from database import get_db
@@ -48,11 +50,13 @@ from schemas import (
     MaterialOut,
     MaterialCreateIn,
     MaterialUpdateIn,
+    EmpresaConfigIn,
 )
 from services.auth import get_current_user, require_permission
 from services.image_service import calculate_aspect_ratio, get_or_create_image
 from services.factura_service import (
     _gen_id,
+    _id_candidates,
     _now_iso,
     create_factura,
     delete_factura,
@@ -60,6 +64,12 @@ from services.factura_service import (
     update_envio_status,
     update_item_status,
 )
+from services.invoice_pdf_service import (
+    build_invoice_context,
+    generate_invoice_pdf,
+    generate_invoice_png,
+)
+from config import get_company_config, save_company_config
 from services.sync import PrefixTransformer
 
 router = APIRouter(prefix="/api/v1", tags=["Operacional"])
@@ -232,6 +242,9 @@ async def patch_factura(
     if data.estatus_entrega is not None:
         updates.append("estatus_entrega = ?")
         values.append(data.estatus_entrega)
+    if data.pago_parcial is not None:
+        updates.append("pago_parcial = ?")
+        values.append(data.pago_parcial)
 
     if not updates:
         raise HTTPException(status_code=400, detail="No hay campos para actualizar")
@@ -304,6 +317,7 @@ async def dispatch_factura_endpoint(
 
 @router.get("/items")
 async def list_items(
+    request: Request,
     status: Optional[str] = None,
     area: Optional[str] = None,
     tipo: Optional[str] = None,
@@ -363,7 +377,7 @@ async def list_items(
     cols = [d[0] for d in cursor.description]
     rows = await cursor.fetchall()
 
-    base_url = settings.BASE_URL if hasattr(settings, "BASE_URL") else ""
+    base_url = str(request.base_url).rstrip("/")
     result = []
     for row in rows:
         d = dict(zip(cols, row))
@@ -376,6 +390,38 @@ async def list_items(
                 d["image_url"] = f"{base_url}{clean}"
         else:
             d["image_url"] = None
+
+        # Resolver lista de imágenes de apoyo
+        raw_apoyo = d.get("imagenes_apoyo")
+        resolved_apoyo = []
+        if raw_apoyo:
+            try:
+                parsed_apoyo = json.loads(raw_apoyo) if isinstance(raw_apoyo, str) else raw_apoyo
+                if isinstance(parsed_apoyo, list):
+                    for img_item in parsed_apoyo:
+                        if not img_item:
+                            continue
+                        img_str = str(img_item).strip()
+                        if img_str.startswith("http://") or img_str.startswith("https://") or img_str.startswith("data:") or img_str.startswith("blob:"):
+                            resolved_apoyo.append(img_str)
+                        else:
+                            cands = _id_candidates(img_str)
+                            placeholders = ",".join(["?"] * len(cands))
+                            img_cursor = await db.execute(f"SELECT file_path FROM images WHERE id IN ({placeholders})", cands)
+                            img_row = await img_cursor.fetchone()
+                            if img_row and img_row[0]:
+                                fp = img_row[0]
+                                clean_fp = fp if fp.startswith("/") else f"/{fp}"
+                                resolved_apoyo.append(f"{base_url}{clean_fp}" if not fp.startswith("http") else fp)
+                            elif img_str.startswith("uploads/") or img_str.startswith("/uploads/"):
+                                clean_p = img_str if img_str.startswith("/") else f"/{img_str}"
+                                resolved_apoyo.append(f"{base_url}{clean_p}")
+                            else:
+                                clean_id = img_str.lstrip('/')
+                                resolved_apoyo.append(f"{base_url}/api/v1/images/{clean_id}")
+            except Exception:
+                pass
+        d["imagenes_apoyo"] = resolved_apoyo
         result.append(d)
 
     return result
@@ -390,7 +436,6 @@ async def add_item_to_factura(
 ):
     """Agrega un nuevo ítem a una factura existente."""
     prefix = current_user.get("prefix", "")
-    transformer = PrefixTransformer(prefix)
 
     # Verificar factura
     cursor = await db.execute("SELECT id FROM facturas WHERE id = ?", (factura_id,))
@@ -400,19 +445,28 @@ async def add_item_to_factura(
     now = _now_iso()
     item_id = _gen_id(prefix)
 
+    raw_apoyo = getattr(data, "imagenes_apoyo", None)
+    if isinstance(raw_apoyo, list):
+        apoyo_json = json.dumps(raw_apoyo, ensure_ascii=False)
+    elif isinstance(raw_apoyo, str) and raw_apoyo.strip():
+        apoyo_json = raw_apoyo
+    else:
+        apoyo_json = "[]"
+
     await db.execute(
         """
         INSERT INTO items (
-            id, factura_id, stock_id, catalogo_id, image_id,
+            id, factura_id, stock_id, catalogo_id, image_id, imagenes_apoyo,
             nombre, cantidad, tipo, subtotal, tela, material,
             descripcion, area, tipo_mueble, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente', ?, ?)
         """,
         (
             item_id, factura_id,
             data.stock_id,
             data.catalogo_id,
             data.image_id,
+            apoyo_json,
             data.nombre or "Producto", data.cantidad, data.tipo, data.subtotal,
             data.tela, data.material, data.descripcion,
             data.area, data.tipo_mueble, now, now,
@@ -538,6 +592,9 @@ async def create_pago(
     prefix = current_user.get("prefix", "")
     pago_id = _gen_id(prefix)
 
+    new_saldo = max(0.0, factura[0] - data.monto)
+    new_pago_parcial = 1 if new_saldo > 0 else 0
+
     await db.execute(
         "INSERT INTO pagos (id, factura_id, monto, fecha, nota, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         (pago_id, factura_id, data.monto, now, data.nota, now),
@@ -546,14 +603,15 @@ async def create_pago(
         """
         UPDATE facturas SET
             monto_pagado = monto_pagado + ?,
-            saldo_pendiente = saldo_pendiente - ?,
+            saldo_pendiente = ?,
+            pago_parcial = ?,
             updated_at = ?
         WHERE id = ?
         """,
-        (data.monto, data.monto, now, factura_id),
+        (data.monto, new_saldo, new_pago_parcial, now, factura_id),
     )
     await db.commit()
-    return {"pago_id": pago_id, "monto": data.monto, "saldo_restante": factura[0] - data.monto}
+    return {"pago_id": pago_id, "monto": data.monto, "saldo_restante": new_saldo}
 
 
 @router.get("/facturas/{factura_id}/pagos")
@@ -1294,7 +1352,26 @@ async def get_config(
         config["materiales_telas"] = all_mat_telas
 
     config["materiales_tabla"] = materiales_tabla
+    config["empresa"] = get_company_config()
     return config
+
+
+@router.get("/config/empresa")
+async def get_empresa_config(
+    current_user: dict = Depends(get_current_user),
+):
+    """Retorna la configuración de la empresa desde company_config.json."""
+    return get_company_config()
+
+
+@router.put("/config/empresa")
+async def update_empresa_config(
+    data: EmpresaConfigIn,
+    current_user: dict = Depends(require_permission("configuracion_modificar")),
+):
+    """Guarda y actualiza la configuración de la empresa en company_config.json."""
+    updated = save_company_config(data.model_dump(exclude_unset=True))
+    return {"status": "updated", "empresa": updated}
 
 
 @router.put("/config")
@@ -1478,6 +1555,29 @@ async def update_material(
     )
 
 
+@router.post("/images/upload")
+async def upload_general_image(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Sube una imagen al servidor y retorna su image_id y ruta."""
+    prefix = current_user.get("prefix") or "P"
+    content = await file.read()
+    img_data = await get_or_create_image(db, content, file.filename, prefix)
+    await db.commit()
+    img_id = img_data["id"]
+    base_url = str(request.base_url).rstrip("/")
+    return {
+        "id": img_id,
+        "file_path": img_data["file_path"],
+        "image_url": f"{base_url}/api/v1/images/{img_id}"
+    }
+
+
+
+
 @router.delete("/materiales/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_material(
     material_id: str,
@@ -1504,3 +1604,184 @@ async def delete_material(
     await db.execute("DELETE FROM materiales WHERE id = ?", (real_id,))
     await db.commit()
     return None
+
+
+# ===========================================================================
+# DESCARGA DE FACTURAS (PDF / PNG)
+# ===========================================================================
+
+async def _fetch_factura_with_items(db: aiosqlite.Connection, factura_id: str) -> tuple[dict, list[dict]]:
+    """
+    Helper interno: obtiene la factura con nombre de cliente y sus ítems.
+    Lanza 404 si no existe.
+    """
+    cursor = await db.execute(
+        """
+        SELECT f.*,
+               COALESCE(c.nombre, json_extract(f.cliente, '$.nombre')) AS cliente_nombre,
+               COALESCE(c.apellido, json_extract(f.cliente, '$.apellido')) AS cliente_apellido
+        FROM facturas f
+        LEFT JOIN clientes c ON f.cliente_id = c.id
+        WHERE f.id = ?
+        """,
+        (factura_id,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+
+    cols = [d[0] for d in cursor.description]
+    factura = dict(zip(cols, row))
+
+    # Obtener ítems resolviendo items_id (CSV) o por factura_id directo
+    items_csv = factura.get("items_id") or ""
+    item_ids = [i.strip() for i in items_csv.split(",") if i.strip()]
+
+    if item_ids:
+        placeholders = ",".join(["?" for _ in item_ids])
+        cursor = await db.execute(
+            f"SELECT * FROM items WHERE id IN ({placeholders}) ORDER BY created_at ASC",
+            item_ids,
+        )
+    else:
+        cursor = await db.execute(
+            "SELECT * FROM items WHERE factura_id = ? ORDER BY created_at ASC",
+            (factura_id,),
+        )
+
+    items_cols = [d[0] for d in cursor.description]
+    items = [dict(zip(items_cols, r)) for r in await cursor.fetchall()]
+
+    return factura, items
+
+
+def _group_invoice_items(items: list[dict]) -> list[dict]:
+    """
+    Agrupa ítems idénticos para PDF/PNG (fusionando cantidad y subtotal).
+    Mantiene la compatibilidad visual de la factura cuando los ítems de encargo
+    vienen desglosados (unrolled) desde el frontend.
+    """
+    grouped = {}
+    result = []
+    
+    for item in items:
+        cantidad = item.get("cantidad") or 1
+        subtotal = item.get("subtotal") or 0.0
+        unit_price = subtotal / cantidad if cantidad > 0 else 0.0
+        
+        key = (
+            str(item.get("nombre") or "").strip(),
+            str(item.get("catalogo_id") or ""),
+            str(item.get("color") or ""),
+            str(item.get("tela") or ""),
+            str(item.get("material") or ""),
+            round(unit_price, 2)
+        )
+        
+        if key in grouped:
+            grouped_item = grouped[key]
+            grouped_item["cantidad"] += cantidad
+            grouped_item["subtotal"] += subtotal
+        else:
+            new_item = dict(item)
+            grouped[key] = new_item
+            result.append(new_item)
+            
+    return result
+
+
+@router.get(
+    "/facturas/{factura_id}/download/pdf",
+    tags=["Facturas"],
+    summary="Descargar factura en PDF",
+    response_description="Archivo PDF de la factura",
+)
+async def download_factura_pdf(
+    factura_id: str,
+    current_user: dict = Depends(require_permission("facturas_ver")),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Genera y descarga la factura en formato PDF.
+
+    La información de la empresa (nombre, logo, teléfono, ubicación, RNC)
+    se lee desde `company_config.json`. El RNC solo aparece si está configurado.
+    """
+    factura, items = await _fetch_factura_with_items(db, factura_id)
+    items = _group_invoice_items(items)
+    company = get_company_config()
+    context = build_invoice_context(factura, items, company)
+
+    try:
+        pdf_bytes = generate_invoice_pdf(context)
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"weasyprint no está instalado en el servidor: {e}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generando PDF: {e}",
+        )
+
+    safe_id = factura_id.replace("/", "-")
+    filename = f"factura_{safe_id}.pdf"
+
+    import io
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/facturas/{factura_id}/download/png",
+    tags=["Facturas"],
+    summary="Descargar factura en PNG",
+    response_description="Imagen PNG de la factura",
+)
+async def download_factura_png(
+    factura_id: str,
+    current_user: dict = Depends(require_permission("facturas_ver")),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """
+    Genera y descarga la factura en formato PNG (imagen de alta calidad).
+
+    Genera el mismo diseño que el PDF. Requiere WeasyPrint con soporte Cairo
+    o pdf2image + Poppler instalado en el sistema.
+    """
+    factura, items = await _fetch_factura_with_items(db, factura_id)
+    items = _group_invoice_items(items)
+    company = get_company_config()
+    context = build_invoice_context(factura, items, company)
+
+    try:
+        png_bytes = generate_invoice_png(context)
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Dependencia faltante para generar PNG: {e}",
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generando PNG: {e}",
+        )
+
+    safe_id = factura_id.replace("/", "-")
+    filename = f"factura_{safe_id}.png"
+
+    import io
+    return StreamingResponse(
+        io.BytesIO(png_bytes),
+        media_type="image/png",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

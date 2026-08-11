@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Factura {{ factura_id }} — {{ company.nombre }}</title>
+  <style>
+    /* ── Reset ───────────────────────────────── */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 10pt;
+      color: #1a1a1a;
+      background: #ffffff;
+    }
+
+    .page {
+      padding: 30pt 36pt 30pt 36pt;
+      max-width: 680pt;
+      margin: 0 auto;
+    }
+
+    /* ── HEADER ──────────────────────────────── */
+    table.header-table {
+      width: 100%;
+      margin-bottom: 18pt;
+    }
+
+    .logo-box {
+      width: 70pt;
+      height: 70pt;
+      background-color: #d0d0d0;
+      text-align: center;
+      vertical-align: middle;
+      font-size: 8pt;
+      font-weight: bold;
+      color: #777777;
+      letter-spacing: 1pt;
+      line-height: 1.3;
+    }
+
+    .logo-img {
+      width: 70pt;
+      height: 70pt;
+      object-fit: contain;
+    }
+
+    .company-name {
+      font-size: 16pt;
+      font-weight: normal;
+      color: #1a1a1a;
+      margin-bottom: 2pt;
+    }
+
+    .company-tagline {
+      font-size: 9pt;
+      color: #888888;
+      margin-bottom: 6pt;
+    }
+
+    .contact-row {
+      font-size: 8pt;
+      color: #555555;
+      margin-top: 3pt;
+    }
+
+    .contact-icon {
+      display: inline-block;
+      width: 10pt;
+      font-size: 9pt;
+      color: #777777;
+      vertical-align: middle;
+    }
+
+    /* ── Separator ───────────────────────────── */
+    .header-line {
+      border: none;
+      border-top: 1.5pt solid #1a1a1a;
+      margin-bottom: 20pt;
+    }
+
+    .footer-line {
+      border: none;
+      border-top: 1.5pt solid #1a1a1a;
+      margin-top: 20pt;
+      margin-bottom: 14pt;
+    }
+
+    /* ── FACTURA TITLE ───────────────────────── */
+    .factura-title {
+      text-align: center;
+      font-size: 22pt;
+      font-weight: normal;
+      letter-spacing: 14pt;
+      color: #1a1a1a;
+      margin-bottom: 18pt;
+      text-indent: 14pt; /* compensar letter-spacing al final */
+    }
+
+    /* ── INFO GRID ───────────────────────────── */
+    table.info-grid {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20pt;
+      font-size: 9pt;
+    }
+
+    table.info-grid td {
+      border: 0.75pt solid #1a1a1a;
+      padding: 4pt 7pt;
+      vertical-align: middle;
+    }
+
+    .info-label {
+      color: #1a1a1a;
+      font-weight: normal;
+      white-space: nowrap;
+      width: 100pt;
+    }
+
+    .info-value {
+      font-weight: bold;
+      color: #1a1a1a;
+    }
+
+    .info-key {
+      color: #555555;
+      font-size: 8.5pt;
+      white-space: nowrap;
+      width: 80pt;
+    }
+
+    /* ── ITEMS TABLE ─────────────────────────── */
+    table.items {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 0;
+      font-size: 9pt;
+    }
+
+    table.items thead tr {
+      background-color: #cccccc;
+    }
+
+    table.items thead th {
+      border: 0.75pt solid #1a1a1a;
+      padding: 5pt 7pt;
+      text-align: center;
+      font-weight: bold;
+      font-size: 9pt;
+      color: #1a1a1a;
+    }
+
+    table.items thead th.left { text-align: left; }
+    table.items thead th.right { text-align: right; }
+
+    table.items tbody td {
+      border: 0.75pt solid #1a1a1a;
+      padding: 4.5pt 7pt;
+      color: #1a1a1a;
+      vertical-align: top;
+      min-height: 14pt;
+    }
+
+    table.items tbody td.center { text-align: center; }
+    table.items tbody td.right  { text-align: right; }
+
+    .item-name {
+      font-weight: bold;
+      font-size: 9pt;
+      color: #1a1a1a;
+    }
+
+    .item-detail {
+      font-size: 7.5pt;
+      color: #666666;
+      margin-top: 1.5pt;
+    }
+
+    /* ── TOTALS (parte de la tabla) ──────────── */
+    table.items tfoot td {
+      border: 0.75pt solid #1a1a1a;
+      padding: 4pt 7pt;
+      font-size: 9pt;
+    }
+
+    table.items tfoot tr.subtotal-row td,
+    table.items tfoot tr.pagado-row td,
+    table.items tfoot tr.saldo-row td {
+      background-color: #ffffff;
+    }
+
+    table.items tfoot tr.total-row td {
+      background-color: #cccccc;
+      font-weight: bold;
+    }
+
+    .total-label {
+      text-align: right;
+      color: #1a1a1a;
+    }
+
+    .total-amount {
+      text-align: left;
+      min-width: 75pt;
+      border-left: 0.75pt solid #1a1a1a;
+    }
+
+    /* Celda vacía grande que ocupa el espacio izquierdo de los totales */
+    .totals-spacer {
+      border: 0.75pt solid #1a1a1a;
+      background-color: #ffffff;
+    }
+
+    /* ── FOOTER ──────────────────────────────── */
+    .footer-thanks {
+      text-align: right;
+      font-size: 9.5pt;
+      font-style: italic;
+      color: #1a1a1a;
+      margin-bottom: 22pt;
+    }
+
+    .footer-logo-box {
+      text-align: right;
+    }
+
+    .footer-logo-text {
+      display: inline-block;
+      background-color: #d0d0d0;
+      color: #777777;
+      font-size: 11pt;
+      font-weight: bold;
+      letter-spacing: 2pt;
+      padding: 6pt 14pt;
+    }
+
+    .footer-logo-img {
+      width: 60pt;
+      height: 60pt;
+      object-fit: contain;
+    }
+
+    .footer-generated {
+      font-size: 7pt;
+      color: #aaaaaa;
+      text-align: center;
+      margin-top: 10pt;
+    }
+
+    /* tipo badge inline */
+    .tipo-label {
+      font-size: 7pt;
+      color: #888888;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ══════════ HEADER ══════════ -->
+  <table class="header-table" cellspacing="0" cellpadding="0">
+    <tr>
+      <!-- Logo -->
+      <td style="width:82pt; vertical-align:top; padding-right:14pt;">
+        {% if company.logo_path %}
+          <img class="logo-img" src="{{ company.logo_path }}" alt="Logo" />
+        {% else %}
+          <table cellspacing="0" cellpadding="0" style="width:70pt; height:70pt; background-color:#d0d0d0;">
+            <tr><td style="text-align:center; vertical-align:middle; font-size:8.5pt; font-weight:bold; color:#777777; letter-spacing:1pt; line-height:1.4;">YOUR<br>LOGO</td></tr>
+          </table>
+        {% endif %}
+      </td>
+
+      <!-- Company info -->
+      <td style="vertical-align:top;">
+        <p style="font-size:15pt; font-weight:normal; color:#1a1a1a; margin-bottom:2pt;">{{ company.nombre }}</p>
+        <p style="font-size:8.5pt; color:#888888; margin-bottom:7pt;">Fábrica de Muebles &amp; Tapicería</p>
+
+        {% if company.ubicacion %}
+        <p class="contact-row">
+          <span class="contact-icon">&#9737;</span>
+          {{ company.ubicacion }}
+        </p>
+        {% endif %}
+
+        {% if company.rnc or company.telefono %}
+        <table cellspacing="0" cellpadding="0" style="margin-top:3pt;">
+          <tr>
+            {% if company.rnc %}
+            <td style="padding-right:24pt;">
+              <span style="font-size:8pt; color:#555555;"><span class="contact-icon">&#9678;</span> RNC: {{ company.rnc }}</span>
+            </td>
+            {% endif %}
+            {% if company.telefono %}
+            <td style="padding-right:24pt;">
+              <span style="font-size:8pt; color:#555555;"><span class="contact-icon">&#9742;</span> {{ company.telefono }}</span>
+            </td>
+            {% endif %}
+          </tr>
+        </table>
+        {% endif %}
+      </td>
+    </tr>
+  </table>
+
+  <hr class="header-line">
+
+  <!-- ══════════ TÍTULO ══════════ -->
+  <p class="factura-title">F A C T U R A</p>
+
+  <!-- ══════════ INFO GRID ══════════ -->
+  <table class="info-grid" cellspacing="0" cellpadding="0">
+    <tr>
+      <td class="info-label">Fecha de la factura</td>
+      <td class="info-value">{{ fecha }}</td>
+      <td class="info-key">N.º de factura</td>
+      <td class="info-value">{{ factura_id }}</td>
+    </tr>
+    <tr>
+      <td class="info-label">Destinatario</td>
+      <td colspan="3" class="info-value">{{ cliente_nombre }}{% if cliente_telefono %} &nbsp;·&nbsp; {{ cliente_telefono }}{% endif %}</td>
+    </tr>
+    <tr>
+      <td class="info-label">Observaciones</td>
+      <td colspan="3" style="font-size:8.5pt; color:#555555;">
+        {% if garantia_hasta and garantia_hasta != "Sin Garantía" %}Garantía: {{ garantia_hasta }}{% endif %}
+        {% if entrega_domicilio %}{% if garantia_hasta and garantia_hasta != "Sin Garantía" %} &nbsp;·&nbsp; {% endif %}Entrega a domicilio{% if direccion_entrega %}: {{ direccion_entrega }}{% endif %}{% endif %}
+        {% if not garantia_hasta and not entrega_domicilio %}&nbsp;{% endif %}
+      </td>
+    </tr>
+  </table>
+
+  <!-- ══════════ ITEMS + TOTALES ══════════ -->
+  <table class="items" cellspacing="0" cellpadding="0">
+    <thead>
+      <tr>
+        <th class="left"  style="width:60pt;">Cantidad</th>
+        <th class="left"  style="width:auto;">Descripción</th>
+        <th class="center" style="width:80pt;">Tipo</th>
+        <th class="right"  style="width:90pt;">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td class="center" style="font-size:9pt;">{{ item.cantidad }}</td>
+        <td>
+          <p class="item-name">{{ item.nombre }}</p>
+          {% if item.material or item.tela %}
+            <p class="item-detail">
+              {% if item.material %}Mat: {{ item.material }}{% endif %}
+              {% if item.material and item.tela %} &nbsp;·&nbsp; {% endif %}
+              {% if item.tela %}Tela: {{ item.tela }}{% endif %}
+            </p>
+          {% endif %}
+          {% if item.descripcion %}
+            <p class="item-detail"><i>{{ item.descripcion }}</i></p>
+          {% endif %}
+        </td>
+        <td class="center">
+          <span class="tipo-label">
+            {% if item.tipo == "stock" %}Stock{% else %}Encargo{% endif %}
+          </span>
+        </td>
+        <td class="right" style="font-size:9pt;">{{ currency }}{{ "%.2f"|format(item.subtotal) }}</td>
+      </tr>
+      {% endfor %}
+      <!-- Filas vacías de relleno para dar volumen visual (mínimo 3 extra) -->
+      {% set extra = [1,2,3] %}
+      {% for _ in extra %}
+      <tr>
+        <td style="height:13pt;">&nbsp;</td>
+        <td>&nbsp;</td>
+        <td>&nbsp;</td>
+        <td>&nbsp;</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+
+    <!-- TOTALES dentro de la misma tabla -->
+    <tfoot>
+      <tr class="subtotal-row">
+        <td colspan="2" class="totals-spacer" style="border-right:none;">&nbsp;</td>
+        <td class="total-label" style="border-left:none; border-right:none;">Subtotal</td>
+        <td class="total-amount">{{ currency }}{{ "%.2f"|format(total) }}</td>
+      </tr>
+
+      {% if monto_pagado > 0 %}
+      <tr class="pagado-row">
+        <td colspan="2" class="totals-spacer" style="border-right:none;">&nbsp;</td>
+        <td class="total-label" style="border-left:none; border-right:none;">Pagado</td>
+        <td class="total-amount">{{ currency }}{{ "%.2f"|format(monto_pagado) }}</td>
+      </tr>
+      {% endif %}
+
+      {% if saldo_pendiente > 0 %}
+      <tr class="saldo-row">
+        <td colspan="2" class="totals-spacer" style="border-right:none;">&nbsp;</td>
+        <td class="total-label" style="border-left:none; border-right:none;">Saldo pendiente</td>
+        <td class="total-amount">{{ currency }}{{ "%.2f"|format(saldo_pendiente) }}</td>
+      </tr>
+      {% endif %}
+
+      <tr class="total-row">
+        <td colspan="2" style="border: 0.75pt solid #1a1a1a; background-color:#cccccc;">&nbsp;</td>
+        <td class="total-label" style="background-color:#cccccc; border-left:none; border-right:none; font-weight:bold;">Total debido</td>
+        <td class="total-amount" style="font-weight:bold; border: 0.75pt solid #1a1a1a;">{{ currency }}{{ "%.2f"|format(total) }}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <!-- ══════════ FOOTER ══════════ -->
+  <hr class="footer-line">
+
+  <p class="footer-thanks">¡Gracias por su confianza!</p>
+
+  <div class="footer-logo-box">
+    {% if company.logo_path %}
+      <img class="footer-logo-img" src="{{ company.logo_path }}" alt="Logo" />
+    {% else %}
+      <span class="footer-logo-text">{{ company.nombre | upper }}</span>
+    {% endif %}
+  </div>
+
+  <p class="footer-generated">Documento generado el {{ generated_at }}</p>
+
+</div>
+</body>
+</html>

@@ -198,6 +198,7 @@ async def _get_image_user(
 async def get_image_protected(
     image_id: str,
     request: Request,
+    token: Optional[str] = None,
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """
@@ -208,15 +209,55 @@ async def get_image_protected(
 
     Acepta el token:
     - Header Authorization: Bearer {token}
+    - Query param: ?token={token}
     """
-    # Validar autenticación
-    await _get_image_user(db=db, request=request)
+    # Validar autenticación — el token puede llegar por header o por query param
+    from jose import JWTError, jwt
 
+    raw_token = token  # query param tiene prioridad si se envía
+    if not raw_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            raw_token = auth_header[7:]
+
+    if not raw_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token requerido para acceder a imágenes",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token inválido o expirado",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(raw_token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    cursor = await db.execute("SELECT username, activo FROM usuarios WHERE username = ?", (username,))
+    row = await cursor.fetchone()
+    if not row or not row[1]:
+        raise credentials_exception
+
+    # Buscar la imagen — exacto primero, luego con prefijos alternativos
     cursor = await db.execute(
         "SELECT file_path FROM images WHERE id = ?",
         (image_id,),
     )
     row = await cursor.fetchone()
+    if not row:
+        # Intentar variantes: con/sin prefijo
+        for variant in [f"P-{image_id}", image_id.lstrip("P-"), f"P{image_id}"]:
+            cursor = await db.execute("SELECT file_path FROM images WHERE id = ?", (variant,))
+            row = await cursor.fetchone()
+            if row:
+                break
     if not row:
         raise HTTPException(status_code=404, detail="Imagen no encontrada")
 
@@ -225,17 +266,20 @@ async def get_image_protected(
     # Resolver ruta absoluta
     if file_path.startswith("/uploads/") or file_path.startswith("uploads/"):
         relative = file_path.lstrip("/")
-        abs_path = os.path.join(os.path.dirname(settings.DATABASE_PATH) or ".", relative)
-        if not os.path.exists(abs_path):
-            filename = os.path.basename(file_path)
-            sub = os.path.dirname(file_path.replace("/uploads/", "", 1))
-            abs_path = os.path.join(settings.UPLOAD_DIR, sub, filename)
+        abs_path = os.path.join(settings.UPLOAD_DIR, os.path.relpath(relative, "uploads"))
     elif os.path.isabs(file_path):
         abs_path = file_path
     else:
         abs_path = os.path.join(settings.UPLOAD_DIR, file_path)
 
     if not os.path.exists(abs_path):
-        raise HTTPException(status_code=404, detail="Archivo de imagen no encontrado en disco")
+        # Segundo intento: buscar solo por nombre de archivo bajo UPLOAD_DIR
+        fname = os.path.basename(file_path)
+        for root, _, files in os.walk(settings.UPLOAD_DIR):
+            if fname in files:
+                abs_path = os.path.join(root, fname)
+                break
+        else:
+            raise HTTPException(status_code=404, detail="Archivo de imagen no encontrado en disco")
 
     return FileResponse(abs_path)

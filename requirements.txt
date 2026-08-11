@@ -9,6 +9,15 @@ bcrypt
 python-multipart
 Pillow
 
+# ── Seguridad Avanzada (2FA, QR, GeoIP) ──
+pyotp
+qrcode
+geoip2
+
+# ── Generación de Facturas ──
+weasyprint        # HTML → PDF/PNG (requiere Cairo/GTK en Linux/Docker)
+jinja2            # Motor de templates para el HTML de la factura
+
 # ── Dev / Tests ──
 pytest
 pytest-asyncio

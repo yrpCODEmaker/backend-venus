@@ -34,13 +34,15 @@ from config import settings
 _DDL = """
 -- 1. Usuarios del sistema (solo backend, PK autoincremental)
 CREATE TABLE IF NOT EXISTS usuarios (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    username   TEXT    UNIQUE NOT NULL,
-    hashed_pw  TEXT    NOT NULL,
-    rol        TEXT    NOT NULL DEFAULT 'user',
-    prefix     TEXT    UNIQUE,
-    activo     INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT    DEFAULT (datetime('now'))
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    username     TEXT    UNIQUE NOT NULL,
+    hashed_pw    TEXT    NOT NULL,
+    rol          TEXT    NOT NULL DEFAULT 'user',
+    prefix       TEXT    UNIQUE,
+    activo       INTEGER NOT NULL DEFAULT 1,
+    totp_secret  TEXT,
+    totp_enabled INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT    DEFAULT (datetime('now'))
 );
 
 -- 2. Clientes (PK con prefijo = TEXT)
@@ -111,6 +113,7 @@ CREATE TABLE IF NOT EXISTS facturas (
     facturacion_rapida INTEGER DEFAULT 0,
     declarado_perdida  INTEGER DEFAULT 0,
     declarado_perdonado INTEGER DEFAULT 0,
+    pago_parcial        INTEGER DEFAULT 0,
     updated_at         TEXT
 );
 
@@ -131,6 +134,7 @@ CREATE TABLE IF NOT EXISTS items (
     stock_id         TEXT REFERENCES stock(id),
     catalogo_id      TEXT REFERENCES catalogo(id),
     image_id         TEXT REFERENCES images(id),
+    imagenes_apoyo   TEXT DEFAULT '[]',
     nombre           TEXT,
     cantidad         INTEGER,
     tipo             TEXT,
@@ -370,7 +374,23 @@ async def init_db(db_path: str | None = None):
         except Exception:
             pass  # Ya existe
         try:
+            await db.execute("ALTER TABLE facturas ADD COLUMN pago_parcial INTEGER DEFAULT 0")
+        except Exception:
+            pass  # Ya existe
+        try:
             await db.execute("ALTER TABLE images ADD COLUMN hash TEXT")
+        except Exception:
+            pass  # Ya existe
+        try:
+            await db.execute("ALTER TABLE items ADD COLUMN imagenes_apoyo TEXT DEFAULT '[]'")
+        except Exception:
+            pass  # Ya existe
+        try:
+            await db.execute("ALTER TABLE usuarios ADD COLUMN totp_secret TEXT")
+        except Exception:
+            pass  # Ya existe
+        try:
+            await db.execute("ALTER TABLE usuarios ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0")
         except Exception:
             pass  # Ya existe
 

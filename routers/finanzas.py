@@ -126,7 +126,7 @@ async def get_metricas(
         FROM items i
         JOIN facturas f ON i.factura_id = f.id
         LEFT JOIN envios e ON e.factura_id = f.id
-        WHERE i.status = 'Procesado'
+        WHERE LOWER(i.status) IN ('procesado', 'completado')
     """
     async with db.execute(query_items) as cursor:
         items_procesados_db = await cursor.fetchall()
@@ -163,16 +163,19 @@ async def get_metricas(
             mueble_key = item["tipo_mueble"] or item["nombre"]
             top_muebles_map[mueble_key] += 1
             
-            # El area podría estar en JSON
+            # El area podría estar en JSON o separado por comas
             areas = []
-            try:
-                areas_parsed = json.loads(item["area"])
-                if isinstance(areas_parsed, list):
-                    areas = areas_parsed
-                else:
-                    areas = [item["area"]]
-            except:
-                areas = [item["area"]]
+            raw_area = item["area"]
+            if raw_area and str(raw_area).strip() != 'null':
+                try:
+                    areas_parsed = json.loads(raw_area)
+                    if isinstance(areas_parsed, list):
+                        areas = areas_parsed
+                    else:
+                        areas = [str(raw_area)]
+                except:
+                    # Si falla el parseo JSON, intentar separarlo por comas
+                    areas = [x.strip() for x in str(raw_area).split(",") if x.strip()]
                 
             for a in areas:
                 if a and a != 'null':

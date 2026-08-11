@@ -56,7 +56,37 @@ En `GET /sync/image/{id}`, la ruta leída desde la BD se resuelve con `Path.reso
 
 ---
 
-### 3. Credenciales administrativas por defecto — HIGH ✅ Parcialmente resuelto
+### 4. Capas de Seguridad Avanzadas (Rate Limiting, 2FA/TOTP, Anti-Ingeniería Inversa, Smart Login) ✅ Implementado
+
+**Archivos modificados:** `config.py`, `database.py`, `schemas.py`, `services/auth.py`, `routers/auth.py`
+
+#### 4.1 Control de Intentos Fallidos y Bloqueo (En Memoria - Opción 1B)
+- Se implementó la clase `LoginRateLimiter` para rastrear intentos fallidos por usuario sin persistencia innecesaria en disco.
+- Al alcanzar **3 intentos fallidos consecutivos**:
+  - Si el usuario **tiene 2FA activo**: Se exige código OTP de 6 dígitos para autenticar.
+  - Si el usuario **NO tiene 2FA activo**: Se bloquea la cuenta por **5 minutos** (HTTP 429 Too Many Requests con cabecera `Retry-After`).
+- Al iniciar sesión con éxito, el contador de fallos se reinicia automáticamente.
+
+#### 4.2 Autenticación de Dos Factores (2FA / TOTP)
+- Implementado utilizando `pyotp` y `qrcode` (RFC 6238).
+- Flujo en Configuración de Usuario:
+  - `POST /api/v1/auth/2fa/setup`: Genera clave secreta y código QR en Base64 PNG + URL `otpauth://`.
+  - `POST /api/v1/auth/2fa/enable`: Valida 1 código OTP ingresado por el usuario para confirmar la sincronización de la app autenticadora antes de activar `totp_enabled = 1`.
+  - `POST /api/v1/auth/2fa/disable`: Desactiva 2FA previa confirmación de clave o código OTP.
+  - `GET /api/v1/auth/2fa/status`: Consulta el estado de activación de 2FA.
+
+#### 4.3 Regla Anti-Ingeniería Inversa (Detección de Probing / Sonda)
+- Si un cliente envía un `otp_code` en el request de inicio de sesión cuando la cuenta **NO requiere OTP** (`totp_enabled == 0`, intentos < 3 y IP segura), el backend lo detecta como intento de sonda o ingeniería inversa.
+- **Acción:** La cuenta se bloquea automáticamente por **5 minutos** retornando HTTP 429.
+
+#### 4.4 Inicio de Sesión Inteligente (Detección por IP / GeoIP)
+- Inspecciona la IP del cliente (`X-Forwarded-For`, `X-Real-IP`, o `client.host`).
+- Mediante la librería `geoip2` y la base de datos GeoIP local `GeoLite2-Country.mmdb`, valida si la IP proviene de un país fuera del listado permitido (por defecto `['DO']`).
+- Si la IP es extranjera o sospechosa, se requiere verificación obligatoria por código OTP.
+
+---
+
+## Credenciales administrativas por defecto — HIGH ✅ Parcialmente resuelto
 
 **Archivos:** `config.py`, `database.py`
 

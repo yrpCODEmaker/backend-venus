@@ -81,10 +81,7 @@ class PrefixTransformer:
 
     def transform_image(self, data) -> dict:
         d = self._base_transform(data)
-        # SEGURIDAD: el file_path del cliente nunca se persiste directamente.
-        # El backend genera su propia ruta al recibir la imagen física via /upload_image.
-        # Persisitir una ruta controlada por el cliente abriría un vector LFI.
-        d["file_path"] = None
+        d["file_path"] = data.file_path or ""
         return d
 
     def transform_catalogo(self, data) -> dict:
@@ -220,7 +217,7 @@ _ENTITY_CONFIG = [
         "id", "cliente_id", "cliente", "fecha", "total", "monto_pagado",
         "saldo_pendiente", "items_id", "entrega_domicilio",
         "direccion_entrega", "estatus_entrega", "garantia_hasta",
-        "status_garantia", "venc_garantia", "facturacion_rapida", "updated_at",
+        "status_garantia", "venc_garantia", "facturacion_rapida", "pago_parcial", "updated_at",
     ], "transform_factura", "updated_at"),
 
     ("pagos", [
@@ -327,7 +324,7 @@ _PULL_CONFIG = [
         "id", "cliente_id", "cliente", "fecha", "total", "monto_pagado",
         "saldo_pendiente", "items_id", "entrega_domicilio",
         "direccion_entrega", "estatus_entrega", "garantia_hasta",
-        "status_garantia", "venc_garantia", "facturacion_rapida", "updated_at",
+        "status_garantia", "venc_garantia", "facturacion_rapida", "pago_parcial", "updated_at",
     ], ["id", "cliente_id"]),
 
     ("pagos", [

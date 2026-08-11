@@ -99,7 +99,7 @@ async def user_token(client):
             "images": [{
                 "local_id": 1,
                 "aspect_ratio": "16:9",
-                "file_path": "/local/sofa.jpg",
+                "file_path": "local/sofa.jpg",
                 "updated_at": "2026-07-16T12:00:00",
             }],
             "catalogo": [{
@@ -237,6 +237,40 @@ class TestFacturaCreate:
         assert item["area"] == "Tapicería"
         assert item["tipo_mueble"] == "Sofá"
         assert item["image_id"] == "L-1"
+
+    @pytest.mark.asyncio
+    async def test_create_and_get_factura_with_null_material_and_tela(self, client, user_token):
+        """Crear factura con material y tela explicitados como null se persisten y devuelven como null."""
+        resp = await client.post(
+            "/api/v1/facturas",
+            json={
+                "cliente_id": "L1",
+                "total": 4500,
+                "items": [{
+                    "catalogo_id": "L1",
+                    "nombre": "Mueble Sin Material Ni Tela",
+                    "cantidad": 1,
+                    "tipo": "encargo",
+                    "subtotal": 4500,
+                    "material": None,
+                    "tela": None,
+                    "color": None,
+                }],
+            },
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+        assert resp.status_code == 201
+        factura_id = resp.json()["id"]
+
+        resp_detail = await client.get(
+            f"/api/v1/facturas/{factura_id}",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+        assert resp_detail.status_code == 200
+        item = resp_detail.json()["items"][0]
+        assert item["material"] is None
+        assert item["tela"] is None
+        assert item["color"] is None
 
     @pytest.mark.asyncio
     async def test_create_factura_encargo_auto_inherits_catalog(self, client, user_token):
