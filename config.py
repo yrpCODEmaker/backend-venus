@@ -138,6 +138,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = _default_upload_dir
 
     # ── Seed ──
+    ADMIN_DEFAULT_USERNAME: str = "pichardo"
     ADMIN_DEFAULT_PASSWORD: str = "admin123"
 
     # ── Seguridad Avanzada (2FA, Rate Limit, GeoIP) ──

@@ -1,67 +1,172 @@
 #!/bin/bash
 # ==============================================================================
-# Venus Backend — Script de Configuración de JWT Secret Key para Debian / Linux
+# Venus Backend — Asistente de Configuración (Setup)
 # ==============================================================================
-# Genera una clave JWT segura de 64 caracteres hexadecimales si no existe y la
-# establece en el archivo .env y en el entorno de Debian para que docker compose
-# la inyecte de manera segura al contenedor Alpine sin requerir intervención manual.
+# Genera el entorno para Producción interactivamente.
 # ==============================================================================
-
-set -e
 
 ENV_FILE=".env"
 
-echo "======================================================"
-echo " Venus Backend — Configuración de Clave Secreta JWT   "
-echo "======================================================"
-
-# 1. Generar la clave secreta con openssl, python3 o /dev/urandom
-if command -v openssl >/dev/null 2>&1; then
-    NEW_SECRET_KEY=$(openssl rand -hex 32)
-elif command -v python3 >/dev/null 2>&1; then
-    NEW_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-else
-    NEW_SECRET_KEY=$(head -c 32 /dev/urandom | xxd -p | tr -d '\n')
-fi
-
-if [ -z "$NEW_SECRET_KEY" ]; then
-    echo "[ERROR] No se pudo generar la clave secreta JWT."
-    exit 1
-fi
-
-echo "[✔] Clave JWT de 64 caracteres (hex) generada correctamente."
-
-# 2. Configurar o actualizar la variable SECRET_KEY en .env
-if [ -f "$ENV_FILE" ]; then
-    if grep -q "^SECRET_KEY=" "$ENV_FILE"; then
-        # Actualiza clave en .env existente
-        sed -i 's/^SECRET_KEY=.*/SECRET_KEY='"$NEW_SECRET_KEY"'/' "$ENV_FILE"
-        echo "[✔] Variable SECRET_KEY actualizada en $ENV_FILE"
+# Funciones de ayuda para preguntas interactivas
+ask() {
+    local prompt="$1"
+    local default_val="$2"
+    local var_name="$3"
+    read -p "$prompt [$default_val]: " input
+    if [ -z "$input" ]; then
+        eval $var_name="'$default_val'"
     else
-        echo "SECRET_KEY=$NEW_SECRET_KEY" >> "$ENV_FILE"
-        echo "[✔] Variable SECRET_KEY agregada a $ENV_FILE"
+        eval $var_name="'$input'"
     fi
-else
-    echo "SECRET_KEY=$NEW_SECRET_KEY" > "$ENV_FILE"
-    echo "[✔] Archivo $ENV_FILE creado con la variable SECRET_KEY"
+}
+
+ask_yes_no() {
+    local prompt="$1"
+    local var_name="$2"
+    while true; do
+        read -p "$prompt [y/N]: " yn
+        case $yn in
+            [Yy]* ) eval $var_name=1; break;;
+            [Nn]* | "" ) eval $var_name=0; break;;
+            * ) echo "Por favor, responde 'y' o 'n'.";;
+        esac
+    done
+}
+
+echo "======================================================"
+echo " Venus Backend — Asistente de Configuración           "
+echo "======================================================"
+echo ""
+
+# 1. Chequeo de .env existente
+UPDATE_ENV=1
+if [ -f "$ENV_FILE" ]; then
+    echo "El archivo $ENV_FILE ya existe."
+    ask_yes_no "¿Deseas actualizarlo?" UPDATE_ENV
+    if [ "$UPDATE_ENV" -eq 0 ]; then
+        START_CONTAINER=0
+        ask_yes_no "¿Deseas levantar el contenedor?" START_CONTAINER
+        if [ "$START_CONTAINER" -eq 1 ]; then
+            echo "Levantando contenedor..."
+            set +e
+            OUTPUT=$(docker compose up -d --build 2>&1)
+            STATUS=$?
+            set -e
+            if [ $STATUS -ne 0 ]; then
+                echo ""
+                echo "[ERROR] El levantamiento del contenedor ha fallado. Detalles:"
+                echo "$OUTPUT"
+                exit 1
+            fi
+            echo "[✔] Contenedor levantado exitosamente."
+        fi
+        exit 0
+    fi
 fi
 
-# 3. Exportar para la sesión de shell actual en Debian
-export SECRET_KEY="$NEW_SECRET_KEY"
+# 2. Pedir parámetros de Administrador
+echo ""
+echo "--- Configuración de credenciales de Administrador ---"
+ask "Usuario administrador" "admin" ADMIN_USER
+ask "Contraseña administrador" "admin" ADMIN_PASS
 
-# 4. Añadir a ~/.bashrc para que persista entre reinicios de shell en Debian
-if [ -f "$HOME/.bashrc" ]; then
-    if ! grep -q "SECRET_KEY=" "$HOME/.bashrc"; then
-        echo "export SECRET_KEY=\"$NEW_SECRET_KEY\"" >> "$HOME/.bashrc"
-        echo "[✔] Variable SECRET_KEY agregada a $HOME/.bashrc para entorno Debian"
+# 3. Configuración de JWT
+echo ""
+echo "--- Configuración de Seguridad (JWT) ---"
+ask_yes_no "¿Deseas generar la clave JWT (SECRET_KEY) automáticamente?" AUTO_JWT
+if [ "$AUTO_JWT" -eq 1 ]; then
+    set +e
+    if command -v openssl >/dev/null 2>&1; then
+        JWT_SECRET=$(openssl rand -hex 32 2>&1)
+        STATUS=$?
+    elif command -v python3 >/dev/null 2>&1; then
+        JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))" 2>&1)
+        STATUS=$?
+    else
+        # Fallback en caso de que no haya openssl ni python3
+        JWT_SECRET=$(head -c 32 /dev/urandom | xxd -p | tr -d '\n' 2>&1)
+        STATUS=$?
     fi
+    set -e
+    
+    if [ $STATUS -ne 0 ]; then
+        echo ""
+        echo "[ERROR] La generación de la clave secreta ha fallado. Detalles:"
+        echo "$JWT_SECRET"
+        exit 1
+    fi
+    echo "[✔] Clave JWT generada automáticamente."
+else
+    ask "Ingresa tu SECRET_KEY personalizado" "cambiame-en-produccion-por-algo-seguro" JWT_SECRET
+fi
+
+# 4. Configuración de Almacenamiento
+echo ""
+echo "--- Configuración de Almacenamiento ---"
+ask_yes_no "¿Deseas modificar la ruta donde se guarda la base de datos?" MOD_DB
+if [ "$MOD_DB" -eq 1 ]; then
+    ask "Ruta de la base de datos (DATABASE_PATH)" "/mnt/db/venus.db" DB_PATH
+else
+    DB_PATH=""
+fi
+
+ask_yes_no "¿Deseas modificar la ruta donde se suben las fotos?" MOD_UPLOAD
+if [ "$MOD_UPLOAD" -eq 1 ]; then
+    ask "Ruta de las fotos (UPLOAD_DIR)" "/mnt/db/uploads" UPLOAD_DIR
+else
+    UPLOAD_DIR=""
+fi
+
+# 5. Escribir .env
+echo ""
+echo "Generando $ENV_FILE..."
+cat <<EOF > "$ENV_FILE"
+# ── Configuración generada por asistente ──
+ENV=production
+
+# ── Almacenamiento ──
+EOF
+
+if [ -n "$DB_PATH" ]; then
+    echo "DATABASE_PATH=$DB_PATH" >> "$ENV_FILE"
+fi
+if [ -n "$UPLOAD_DIR" ]; then
+    echo "UPLOAD_DIR=$UPLOAD_DIR" >> "$ENV_FILE"
+fi
+
+cat <<EOF >> "$ENV_FILE"
+
+# ── JWT ──
+SECRET_KEY=$JWT_SECRET
+JWT_ALGORITHM=HS256
+JWT_EXPIRE_MINUTES=60
+
+# ── Seed (usuario y contraseña inicial) ──
+ADMIN_DEFAULT_USERNAME=$ADMIN_USER
+ADMIN_DEFAULT_PASSWORD=$ADMIN_PASS
+EOF
+echo "[✔] Archivo $ENV_FILE guardado exitosamente."
+
+# 6. Levantar contenedor automáticamente
+echo ""
+ask_yes_no "¿Deseas levantar el contenedor automáticamente ahora?" START_CONTAINER_END
+if [ "$START_CONTAINER_END" -eq 1 ]; then
+    echo "Levantando contenedor..."
+    set +e
+    OUTPUT=$(docker compose up -d --build 2>&1)
+    STATUS=$?
+    set -e
+    if [ $STATUS -ne 0 ]; then
+        echo ""
+        echo "[ERROR] El levantamiento del contenedor ha fallado. Detalles:"
+        echo "$OUTPUT"
+        exit 1
+    fi
+    echo "[✔] Contenedor levantado exitosamente."
 fi
 
 echo ""
 echo "======================================================"
-echo " ¡Configuración Exitosa!                              "
+echo " ¡Configuración Completada!                           "
 echo "======================================================"
-echo " La variable SECRET_KEY está lista para Docker Compose."
-echo " Para desplegar el servidor backend en Alpine ejecuta: "
-echo "   docker compose up -d --build                       "
-echo "======================================================"
+exit 0

@@ -2,7 +2,7 @@
 Venus Backend — Base de datos SQLite con aiosqlite.
 
 Provee conexión async a SQLite con WAL mode, creación de las 12 tablas
-del esquema Venus, y seed del usuario administrador 'pichardo'.
+del esquema Venus, y seed del usuario administrador inicial.
 
 Reemplaza la combinación PostgreSQL + SQLAlchemy + Alembic por SQL directo,
 manteniendo la misma estructura de tablas documentada en la arquitectura.
@@ -398,17 +398,22 @@ async def init_db(db_path: str | None = None):
             settings.ADMIN_DEFAULT_PASSWORD.encode("utf-8"),
             bcrypt.gensalt(),
         ).decode("utf-8")
+        
+        admin_username = settings.ADMIN_DEFAULT_USERNAME
+        admin_prefix = admin_username[0].upper() if admin_username else "A"
+
         await db.execute(
             """
             INSERT OR IGNORE INTO usuarios (username, hashed_pw, rol, prefix, activo)
-            VALUES (?, ?, 'admin', 'P', 1)
+            VALUES (?, ?, 'admin', ?, 1)
             """,
-            ("pichardo", hashed),
+            (admin_username, hashed, admin_prefix),
         )
         await db.execute(
             """
-            UPDATE usuarios SET prefix = 'P' WHERE username = 'pichardo' AND (prefix IS NULL OR prefix != 'P')
-            """
+            UPDATE usuarios SET prefix = ? WHERE username = ? AND (prefix IS NULL OR prefix != ?)
+            """,
+            (admin_prefix, admin_username, admin_prefix)
         )
 
         await db.execute(
@@ -429,8 +434,9 @@ async def init_db(db_path: str | None = None):
                    1, 1, 1,
                    1, 1, 1,
                    1, '[]'
-            FROM usuarios WHERE username = 'pichardo'
-            """
+            FROM usuarios WHERE username = ?
+            """,
+            (admin_username,)
         )
         await db.commit()
 
