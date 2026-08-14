@@ -78,6 +78,50 @@ def _get_cliente_telefono(factura: dict) -> str:
     return ""
 
 
+def _clean_attribute_value(val) -> str | None:
+    """
+    Limpia y formatea el valor de un atributo (material, tela, color, etc.).
+    Convierte listas JSON o representaciones en string tipo '["Madera Pino"]'
+    a texto limpio como 'Madera Pino'.
+    Si el valor es None, vacío, 'null', '[]', o equivalente, retorna None.
+    """
+    if val is None:
+        return None
+
+    if isinstance(val, (list, tuple, set)):
+        cleaned_list = []
+        for elem in val:
+            cleaned_elem = _clean_attribute_value(elem)
+            if cleaned_elem:
+                cleaned_list.append(cleaned_elem)
+        if not cleaned_list:
+            return None
+        return ", ".join(cleaned_list)
+
+    if not isinstance(val, str):
+        val = str(val)
+
+    val_str = val.strip()
+    if not val_str or val_str.lower() in ("null", "none", "[]", '[""]', "''", '""'):
+        return None
+
+    # Intentar desestructurar JSON si parece un array o string JSON
+    if (val_str.startswith("[") and val_str.endswith("]")) or (val_str.startswith('"') and val_str.endswith('"')):
+        import json as _json
+        try:
+            parsed = _json.loads(val_str)
+            return _clean_attribute_value(parsed)
+        except Exception:
+            pass
+
+    # Limpiar comillas o corchetes sobrantes en caso de JSON mal formateado
+    val_str = val_str.strip('"\'[]').strip()
+    if not val_str or val_str.lower() in ("null", "none"):
+        return None
+
+    return val_str
+
+
 def build_invoice_context(factura: dict, items: list, company: dict) -> dict:
     """
     Construye el diccionario de contexto para el template Jinja2.
@@ -99,6 +143,14 @@ def build_invoice_context(factura: dict, items: list, company: dict) -> dict:
 
     generated_at = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
 
+    processed_items = []
+    for item in items:
+        item_copy = dict(item)
+        item_copy["material"] = _clean_attribute_value(item_copy.get("material"))
+        tela_val = item_copy.get("tela") or item_copy.get("color")
+        item_copy["tela"] = _clean_attribute_value(tela_val)
+        processed_items.append(item_copy)
+
     return {
         "company": company,
         "factura_id": factura.get("id", "—"),
@@ -117,7 +169,7 @@ def build_invoice_context(factura: dict, items: list, company: dict) -> dict:
         "monto_pagado": float(factura.get("monto_pagado") or 0),
         "saldo_pendiente": float(factura.get("saldo_pendiente") or 0),
         # Ítems
-        "items": items,
+        "items": processed_items,
     }
 
 
@@ -156,24 +208,60 @@ def generate_invoice_pdf(context: dict) -> bytes:
 
 def generate_invoice_png(context: dict, dpi: int = 150) -> bytes:
     """
-    Genera la factura en PNG desde el mismo contexto que el PDF usando WeasyPrint.
+    Genera la factura en PNG desde el mismo contexto que el PDF.
+    Renderiza primero el PDF con WeasyPrint y lo convierte a PNG usando pypdfium2, pdf2image o write_png.
 
     Returns:
         Bytes del archivo PNG.
     """
-    html_content = _render_invoice_html(context)
+    # 1. Generar el PDF base con WeasyPrint
+    pdf_bytes = generate_invoice_pdf(context)
 
+    # 2. Convertir el PDF a PNG vía pypdfium2 (método nativo sin binarios externos de sistema)
     try:
+        import pypdfium2 as pdfium
+        pdf = pdfium.PdfDocument(pdf_bytes)
+        if len(pdf) > 0:
+            page = pdf[0]
+            # scale=dpi/72.0 (72 DPI es la escala 1x estándar de PDF)
+            image = page.render(scale=dpi / 72.0).to_pil()
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception:
+        pass
+
+    # 3. Fallback: pdf2image
+    try:
+        from pdf2image import convert_from_bytes
+        images = convert_from_bytes(pdf_bytes, dpi=dpi)
+        if images:
+            img_buf = io.BytesIO()
+            images[0].save(img_buf, format="PNG")
+            return img_buf.getvalue()
+    except Exception:
+        pass
+
+    # 4. Fallback: WeasyPrint write_png nativo (en versiones antiguas que lo soporten)
+    try:
+        html_content = _render_invoice_html(context)
         from weasyprint import HTML
-        document = HTML(string=html_content, base_url=str(_TEMPLATES_DIR)).render()
-        result = document.write_png(resolution=dpi)
-        # En versiones distintas retorna bytes o (bytes, warnings)
-        png_bytes = result[0] if isinstance(result, tuple) else result
-        if png_bytes and len(png_bytes) > 0:
-            return png_bytes
-        raise RuntimeError("write_png devolvió un resultado vacío.")
-    except Exception as e:
-        raise RuntimeError(
-            f"No se pudo generar el PNG con WeasyPrint. Error: {e}\n"
-            "Asegúrate de tener instaladas las dependencias del sistema en Linux/Docker."
-        ) from e
+        html_obj = HTML(string=html_content, base_url=str(_TEMPLATES_DIR))
+        if hasattr(html_obj, "write_png"):
+            buf = io.BytesIO()
+            html_obj.write_png(buf, resolution=dpi)
+            return buf.getvalue()
+
+        document = html_obj.render()
+        if hasattr(document, "write_png"):
+            result = document.write_png(resolution=dpi)
+            png_bytes = result[0] if isinstance(result, tuple) else result
+            if png_bytes and len(png_bytes) > 0:
+                return png_bytes
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "No se pudo generar la imagen PNG de la factura. "
+        "Asegúrate de tener instalado 'pypdfium2' en el entorno Python."
+    )

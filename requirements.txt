@@ -15,7 +15,8 @@ qrcode
 geoip2
 
 # ── Generación de Facturas ──
-weasyprint        # HTML → PDF/PNG (requiere Cairo/GTK en Linux/Docker)
+weasyprint        # HTML → PDF (requiere Cairo/GTK en Linux/Docker)
+pypdfium2         # Renderizador PDF → PNG puro Python (sin dependencias binarias externas)
 jinja2            # Motor de templates para el HTML de la factura
 
 # ── Dev / Tests ──

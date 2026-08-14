@@ -349,9 +349,9 @@
           <p class="item-name">{{ item.nombre }}</p>
           {% if item.material or item.tela %}
             <p class="item-detail">
-              {% if item.material %}Mat: {{ item.material }}{% endif %}
-              {% if item.material and item.tela %} &nbsp;·&nbsp; {% endif %}
-              {% if item.tela %}Tela: {{ item.tela }}{% endif %}
+              {%- if item.material -%}Mat: {{ item.material }}{%- endif -%}
+              {%- if item.material and item.tela %} {% endif -%}
+              {%- if item.tela -%}Tela: {{ item.tela }}{%- endif -%}
             </p>
           {% endif %}
           {% if item.descripcion %}

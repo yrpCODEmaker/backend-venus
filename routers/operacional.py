@@ -65,6 +65,7 @@ from services.factura_service import (
     update_item_status,
 )
 from services.invoice_pdf_service import (
+    _clean_attribute_value,
     build_invoice_context,
     generate_invoice_pdf,
     generate_invoice_png,
@@ -1669,12 +1670,14 @@ def _group_invoice_items(items: list[dict]) -> list[dict]:
         subtotal = item.get("subtotal") or 0.0
         unit_price = subtotal / cantidad if cantidad > 0 else 0.0
         
+        clean_mat = _clean_attribute_value(item.get("material")) or ""
+        clean_tela = _clean_attribute_value(item.get("tela") or item.get("color")) or ""
+
         key = (
             str(item.get("nombre") or "").strip(),
             str(item.get("catalogo_id") or ""),
-            str(item.get("color") or ""),
-            str(item.get("tela") or ""),
-            str(item.get("material") or ""),
+            clean_tela,
+            clean_mat,
             round(unit_price, 2)
         )
         

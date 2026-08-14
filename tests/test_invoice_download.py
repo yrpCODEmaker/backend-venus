@@ -222,6 +222,64 @@ class TestBuildInvoiceContext:
         # El campo rnc viene del company dict; el template lo chequea con {% if company.rnc %}
         assert ctx["company"]["rnc"] is None
 
+    def test_attributes_cleaning_in_context(self):
+        from services.invoice_pdf_service import build_invoice_context
+        factura = {
+            "id": "v-clean", "fecha": "2026-08-01", "cliente_nombre": "Test", "cliente_apellido": "",
+            "total": 1000.0, "monto_pagado": 0, "saldo_pendiente": 1000.0,
+            "entrega_domicilio": 0, "garantia_hasta": None, "direccion_entrega": None,
+        }
+        items = [
+            {
+                "nombre": "Otoman",
+                "cantidad": 1,
+                "tipo": "encargo",
+                "subtotal": 1000.0,
+                "material": '["Madera Pino"]',
+                "tela": '["Lino"]',
+            },
+            {
+                "nombre": "Mesa",
+                "cantidad": 1,
+                "tipo": "encargo",
+                "subtotal": 1000.0,
+                "material": None,
+                "tela": "null",
+            }
+        ]
+        ctx = build_invoice_context(factura, items, {"nombre": "Venus", "logo_path": None, "rnc": None, "ubicacion": "", "telefono": ""})
+        assert ctx["items"][0]["material"] == "Madera Pino"
+        assert ctx["items"][0]["tela"] == "Lino"
+        assert ctx["items"][1]["material"] is None
+        assert ctx["items"][1]["tela"] is None
+
+
+class TestCleanAttributeValue:
+    """Pruebas unitarias para la función _clean_attribute_value."""
+
+    def test_clean_json_array_string(self):
+        from services.invoice_pdf_service import _clean_attribute_value
+        assert _clean_attribute_value('["Madera Pino"]') == "Madera Pino"
+        assert _clean_attribute_value('["Lino"]') == "Lino"
+        assert _clean_attribute_value('["Madera Pino", "Roble"]') == "Madera Pino, Roble"
+
+    def test_clean_python_list(self):
+        from services.invoice_pdf_service import _clean_attribute_value
+        assert _clean_attribute_value(["Madera Pino"]) == "Madera Pino"
+
+    def test_clean_null_values(self):
+        from services.invoice_pdf_service import _clean_attribute_value
+        assert _clean_attribute_value(None) is None
+        assert _clean_attribute_value("") is None
+        assert _clean_attribute_value("null") is None
+        assert _clean_attribute_value("[]") is None
+        assert _clean_attribute_value('[""]') is None
+
+    def test_clean_plain_strings(self):
+        from services.invoice_pdf_service import _clean_attribute_value
+        assert _clean_attribute_value("madera pino") == "madera pino"
+        assert _clean_attribute_value("Lino") == "Lino"
+
 
 class TestRenderTemplate:
     """Verifica que el template HTML se renderiza sin errores."""
@@ -241,7 +299,7 @@ class TestRenderTemplate:
             "direccion_entrega": None,
         }
         items = [
-            {"nombre": "Mesa", "cantidad": 2, "tipo": "encargo", "subtotal": 2500.0, "material": "Madera", "tela": "Natural", "descripcion": ""},
+            {"nombre": "Otoman", "cantidad": 1, "tipo": "encargo", "subtotal": 2500.0, "material": '["Madera Pino"]', "tela": '["Lino"]', "descripcion": ""},
             {"nombre": "Silla", "cantidad": 4, "tipo": "stock", "subtotal": 2500.0, "material": None, "tela": "Rojo", "descripcion": None},
         ]
         company = {"nombre": "Venus Muebles", "logo_path": None, "ubicacion": "SD", "telefono": "809-0000", "rnc": rnc}
@@ -253,8 +311,11 @@ class TestRenderTemplate:
         assert "Venus Muebles" in html
         assert "v-test0001" in html
         assert "Ana López" in html
-        assert "Mesa" in html
-        assert "Silla" in html
+        assert "Otoman" in html
+        assert "Mat: Madera Pino Tela: Lino" in html
+        assert '["Madera Pino"]' not in html
+        assert '["Lino"]' not in html
+        assert "·" not in html
         assert "5,000" in html or "5000" in html
 
     def test_rnc_not_in_html_when_none(self):

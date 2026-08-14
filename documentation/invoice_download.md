@@ -80,7 +80,8 @@ Ambos documentos muestran:
 2. **Identificación de factura**: ID único y fecha
 3. **Datos del cliente**: Nombre completo, teléfono (si disponible), dirección de entrega
 4. **Badges informativos**: "Entrega a domicilio", "Garantía: X meses"
-5. **Tabla de artículos**: Número, nombre, material, color/tela, tipo (stock/encargo), cantidad, subtotal
+5. **Tabla de artículos**: Número, nombre, especificaciones del ítem (`Mat: <material> Tela: <tela>`), tipo (stock/encargo), cantidad, subtotal.
+   - **Formateo de Atributos**: Los campos `material` y `tela` (o `color`) se desempaquetan automáticamente si vienen como listas JSON (ej. `["Madera Pino"]` → `Madera Pino`). Si algún valor es `null`, vacío o `"null"`, ese atributo se omite por completo en la factura. Se muestran separados por espacio (ej. `Mat: madera pino Tela: Lino`) sin viñetas.
 6. **Resumen financiero**: Subtotal, monto pagado, total, saldo pendiente
 7. **Footer**: Empresa y fecha de generación del documento
 
@@ -98,9 +99,9 @@ generate_invoice_pdf():
   2. xhtml2pdf (fallback)       ─── puro Python, sin dependencias del sistema
 
 generate_invoice_png():
-  1. WeasyPrint write_png()     ─── requiere Cairo/GTK
+  1. pypdfium2 (principal)      ─── puro Python, sin dependencias del sistema, cross-platform
   2. pdf2image + Poppler        ─── requiere Poppler instalado
-  3. pypdfium2 (recomendado)    ─── sin dependencias del sistema, cross-platform
+  3. WeasyPrint write_png()     ─── fallback para versiones legacy de WeasyPrint
 ```
 
 El cambio entre motores es transparente para los endpoints — siempre retornan el mismo resultado.
