@@ -1390,6 +1390,9 @@ async def put_config(
 
     # Insertar nuevas entradas
     config_data = data.model_dump(exclude_none=True)
+    if data.empresa_nombre:
+        save_company_config({"nombre": data.empresa_nombre})
+
     for i, (clave, valor) in enumerate(config_data.items()):
         config_id = f"{prefix}cfg{i}"
         valor_json = json.dumps(valor, ensure_ascii=False) if isinstance(valor, (list, dict)) else str(valor)

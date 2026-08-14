@@ -511,7 +511,8 @@ Esta documentación describe la API REST completa de Venus Backend (FastAPI + SQ
 - **404 Not Found**: Factura no encontrada.
 
 > **⚙️ Configuración de empresa para facturas:**
-> Edita `company_config.json` en la raíz del proyecto para cambiar el nombre, logo, teléfono, ubicación o RNC de la empresa sin modificar código.
+> Se almacena en `company_config.json` en la misma ruta de almacenamiento persistente que la base de datos (`DATABASE_PATH`) y las imágenes (`UPLOAD_DIR`).
+> Puede consultarse y modificarse dinámicamente mediante los endpoints `GET /api/v1/config/empresa` y `PUT /api/v1/config/empresa` sin reiniciar el servidor.
 >
 > ```json
 > {
@@ -843,7 +844,29 @@ Esta documentación describe la API REST completa de Venus Backend (FastAPI + SQ
 
 #### `PUT` `/api/v1/config`
 * **Resumen:** Guardar Configuración
-* **Descripción:** Reemplaza la configuración del usuario.
+* **Descripción:** Reemplaza la configuración del usuario (colores, materiales, tipos, áreas y opcionalmente sincroniza `empresa_nombre`).
+
+#### `GET` `/api/v1/config/empresa`
+* **Resumen:** Obtener Configuración de Empresa
+* **Descripción:** Retorna los datos comerciales de la empresa (`nombre`, `logo_path`, `telefono`, `ubicacion`, `rnc`) leídos desde `company_config.json` en la ruta de almacenamiento persistente.
+* **Permiso requerido:** Usuario autenticado
+
+#### `PUT` `/api/v1/config/empresa`
+* **Resumen:** Actualizar Configuración de Empresa
+* **Descripción:** Actualiza los datos comerciales de la empresa en `company_config.json`. Si `rnc` es omitido o enviado como `null`, se elimina de las facturas generadas.
+* **Permiso requerido:** `configuracion_modificar`
+* **Request Body:** `application/json` (`EmpresaConfigIn`)
+  ```json
+  {
+    "nombre": "Venus Muebles VIP",
+    "rnc": "131-99999-1",
+    "telefono": "+1 (809) 555-0000",
+    "ubicacion": "Santo Domingo, RD",
+    "logo_path": null
+  }
+  ```
+* **Respuestas:**
+  - **200 OK**: `{"status": "updated", "empresa": { ... }}`
 
 ---
 

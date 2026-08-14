@@ -24,10 +24,8 @@ from typing import Optional
 from pydantic_settings import BaseSettings
 
 # ---------------------------------------------------------------------------
-# Configuración de empresa (company_config.json)
+# Configuración por defecto de empresa
 # ---------------------------------------------------------------------------
-COMPANY_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "company_config.json")
-
 _COMPANY_DEFAULTS = {
     "nombre": "Venus Muebles",
     "logo_path": None,
@@ -37,41 +35,13 @@ _COMPANY_DEFAULTS = {
 }
 
 
-def get_company_config() -> dict:
-    """
-    Carga y retorna la configuración de empresa desde company_config.json.
-    """
-    try:
-        with open(COMPANY_CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        print(f"[Venus] Error leyendo company_config.json ({e}). Usando defaults.")
-        return dict(_COMPANY_DEFAULTS)
-
-
-def save_company_config(data: dict) -> dict:
-    """
-    Guarda y persiste los datos de la empresa en company_config.json.
-    """
-    current = get_company_config()
-    updated = {
-        "nombre": data.get("nombre", current.get("nombre", _COMPANY_DEFAULTS["nombre"])),
-        "rnc": data.get("rnc") if data.get("rnc") else None,
-        "telefono": data.get("telefono", current.get("telefono", "")),
-        "ubicacion": data.get("ubicacion", current.get("ubicacion", "")),
-        "logo_path": data.get("logo_path", current.get("logo_path")),
-    }
-    with open(COMPANY_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(updated, f, ensure_ascii=False, indent=2)
-    return updated
-
-
 # ---------------------------------------------------------------------------
 # Detección inteligente de almacenamiento (/mnt/db -> home -> ./ local)
 # ---------------------------------------------------------------------------
-def _resolve_default_storage() -> tuple[str, str]:
+def _resolve_default_storage() -> tuple[str, str, str]:
     """
-    Determina la ubicación por defecto para la BD SQLite y las fotos subidas.
+    Determina la ubicación por defecto para la BD SQLite, fotos subidas
+    y el archivo de configuración comercial (company_config.json).
 
     Prioridad:
       1. '/mnt/db' si está disponible y accesible en Linux.
@@ -89,6 +59,7 @@ def _resolve_default_storage() -> tuple[str, str]:
                 return (
                     os.path.join(mnt_path, "venus.db"),
                     os.path.join(mnt_path, "uploads"),
+                    os.path.join(mnt_path, "company_config.json"),
                 )
         except Exception:
             pass  # Fallback si no hay permiso en /mnt/db
@@ -102,15 +73,16 @@ def _resolve_default_storage() -> tuple[str, str]:
             return (
                 os.path.join(venus_home, "venus.db"),
                 os.path.join(venus_home, "uploads"),
+                os.path.join(venus_home, "company_config.json"),
             )
     except Exception:
         pass
 
     # 3. Fallback final a desarrollo local
-    return ("./venus.db", "./uploads")
+    return ("./venus.db", "./uploads", "./company_config.json")
 
 
-_default_db_path, _default_upload_dir = _resolve_default_storage()
+_default_db_path, _default_upload_dir, _default_company_config_path = _resolve_default_storage()
 
 _KNOWN_INSECURE_KEYS = {
     "dev-secret-key-do-not-use-in-production",
@@ -134,8 +106,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60
 
-    # ── Archivos ──
+    # ── Archivos y Configuración ──
     UPLOAD_DIR: str = _default_upload_dir
+    COMPANY_CONFIG_PATH: str = _default_company_config_path
 
     # ── Seed ──
     ADMIN_DEFAULT_USERNAME: str = "pichardo"
@@ -158,6 +131,10 @@ class Settings(BaseSettings):
             os.makedirs(db_dir, exist_ok=True)
 
         os.makedirs(self.UPLOAD_DIR, exist_ok=True)
+
+        config_dir = os.path.dirname(os.path.abspath(self.COMPANY_CONFIG_PATH))
+        if config_dir:
+            os.makedirs(config_dir, exist_ok=True)
 
         # SECRET_KEY obligatoria siempre
         if not self.SECRET_KEY:
@@ -182,3 +159,61 @@ def _abort(msg: str) -> None:
 
 
 settings = Settings()
+COMPANY_CONFIG_PATH = settings.COMPANY_CONFIG_PATH
+
+
+def get_company_config(path: Optional[str] = None) -> dict:
+    """
+    Carga y retorna la configuración de empresa desde company_config.json
+    alojado en la ruta de almacenamiento configurada (junto a la BD y uploads).
+    """
+    target_path = path or settings.COMPANY_CONFIG_PATH
+
+    if os.path.exists(target_path):
+        try:
+            with open(target_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[Venus] Error leyendo {target_path} ({e}). Usando defaults.")
+
+    # Fallback: Si no existe en el destino, intentar cargar la plantilla base del repo si existe
+    repo_template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "company_config.json")
+    if os.path.exists(repo_template_path) and os.path.abspath(repo_template_path) != os.path.abspath(target_path):
+        try:
+            with open(repo_template_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                try:
+                    target_dir = os.path.dirname(os.path.abspath(target_path))
+                    if target_dir:
+                        os.makedirs(target_dir, exist_ok=True)
+                    with open(target_path, "w", encoding="utf-8") as out_f:
+                        json.dump(data, out_f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                return data
+        except Exception:
+            pass
+
+    return dict(_COMPANY_DEFAULTS)
+
+
+def save_company_config(data: dict, path: Optional[str] = None) -> dict:
+    """
+    Guarda y persiste los datos de la empresa en company_config.json
+    alojado en la ruta de almacenamiento configurada.
+    """
+    target_path = path or settings.COMPANY_CONFIG_PATH
+    current = get_company_config(path=target_path)
+    updated = {
+        "nombre": data.get("nombre", current.get("nombre", _COMPANY_DEFAULTS["nombre"])),
+        "rnc": data.get("rnc") if data.get("rnc") else None,
+        "telefono": data.get("telefono", current.get("telefono", "")),
+        "ubicacion": data.get("ubicacion", current.get("ubicacion", "")),
+        "logo_path": data.get("logo_path", current.get("logo_path")),
+    }
+    target_dir = os.path.dirname(os.path.abspath(target_path))
+    if target_dir:
+        os.makedirs(target_dir, exist_ok=True)
+    with open(target_path, "w", encoding="utf-8") as f:
+        json.dump(updated, f, ensure_ascii=False, indent=2)
+    return updated

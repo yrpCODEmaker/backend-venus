@@ -20,7 +20,11 @@ Este módulo implementa la generación y descarga de facturas en formato PDF y P
 
 ## Configuración de Empresa (`company_config.json`)
 
-La información de empresa se centraliza en el archivo `company_config.json` en la raíz del proyecto. **No se requiere tocar el código** para cambiar estos datos.
+La información de empresa se centraliza en el archivo `company_config.json`, el cual se almacena dinámicamente en la misma ruta persistente que la base de datos (`DATABASE_PATH`) y las imágenes subidas (`UPLOAD_DIR`) (ej. `/mnt/db/company_config.json`, `~/venus_storage/company_config.json` o `./company_config.json`).
+
+Puede consultarse y modificarse en tiempo de ejecución a través de los endpoints:
+- `GET /api/v1/config/empresa`: Consultar datos actuales.
+- `PUT /api/v1/config/empresa`: Actualizar datos comerciales.
 
 ```json
 {

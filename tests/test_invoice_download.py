@@ -419,3 +419,51 @@ class TestGroupInvoiceItems:
         mesas = next(i for i in grouped if i["nombre"] == "Mesa")
         assert mesas["cantidad"] == 1
         assert mesas["subtotal"] == 5000.0
+
+
+class TestCompanyConfigEndpoints:
+    """Pruebas para los endpoints de configuración de empresa y su persistencia."""
+
+    @pytest.mark.asyncio
+    async def test_get_and_put_empresa_config(self, client, user_token):
+        token, user_headers = user_token
+
+        # 1. Login admin
+        admin_resp = await client.post(
+            "/api/v1/auth/login",
+            data={"username": "pichardo", "password": "admin123"},
+        )
+        admin_headers = {"Authorization": f"Bearer {admin_resp.json()['access_token']}"}
+
+        # 2. GET inicial por usuario regular
+        resp = await client.get("/api/v1/config/empresa", headers=user_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "nombre" in data
+
+        # 3. PUT /config/empresa por admin (o usuario con permiso configuracion_modificar)
+        put_resp = await client.put(
+            "/api/v1/config/empresa",
+            json={
+                "nombre": "Muebles Venus VIP",
+                "rnc": "131-99999-1",
+                "telefono": "809-777-8888",
+                "ubicacion": "Santiago, RD",
+            },
+            headers=admin_headers,
+        )
+        assert put_resp.status_code == 200
+        assert put_resp.json()["empresa"]["nombre"] == "Muebles Venus VIP"
+        assert put_resp.json()["empresa"]["rnc"] == "131-99999-1"
+
+        # 4. Verificar que GET /config/empresa y GET /config reflejan los cambios
+        get_resp = await client.get("/api/v1/config/empresa", headers=user_headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["nombre"] == "Muebles Venus VIP"
+        assert get_resp.json()["rnc"] == "131-99999-1"
+
+        cfg_resp = await client.get("/api/v1/config", headers=user_headers)
+        assert cfg_resp.status_code == 200
+        assert cfg_resp.json()["empresa"]["nombre"] == "Muebles Venus VIP"
+        assert cfg_resp.json()["empresa"]["rnc"] == "131-99999-1"
+
