@@ -316,7 +316,10 @@ class TestRenderTemplate:
         assert '["Madera Pino"]' not in html
         assert '["Lino"]' not in html
         assert "·" not in html
-        assert "5,000" in html or "5000" in html
+        assert "5000.00" in html
+        assert "2000.00" in html
+        assert "3000.00" in html
+        assert "Total debido" in html
 
     def test_rnc_not_in_html_when_none(self):
         from services.invoice_pdf_service import _render_invoice_html

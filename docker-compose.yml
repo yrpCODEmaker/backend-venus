@@ -16,8 +16,11 @@ services:
       - JWT_EXPIRE_MINUTES=60
       - ADMIN_DEFAULT_USERNAME=${ADMIN_DEFAULT_USERNAME:-pichardo}
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-admin123}
+      # Rutas de almacenamiento persistente en el volumen /mnt/db del VPS
+      - DATABASE_PATH=/mnt/db/venus.db
+      - UPLOAD_DIR=/mnt/db/uploads
+      - COMPANY_CONFIG_PATH=/mnt/db/company_config.json
     volumes:
-      # Montaje de /mnt/db (ubicación principal en Linux)
+      # Montaje del volumen de almacenamiento extra del VPS en /mnt/db
       - /mnt/db:/mnt/db
-      # Montaje de fallback a home (~/venus_storage)
-      - ~/.venus_storage:/root/venus_storage
+

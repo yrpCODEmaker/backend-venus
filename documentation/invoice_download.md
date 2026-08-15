@@ -86,7 +86,7 @@ Ambos documentos muestran:
 4. **Badges informativos**: "Entrega a domicilio", "Garantía: X meses"
 5. **Tabla de artículos**: Número, nombre, especificaciones del ítem (`Mat: <material> Tela: <tela>`), tipo (stock/encargo), cantidad, subtotal.
    - **Formateo de Atributos**: Los campos `material` y `tela` (o `color`) se desempaquetan automáticamente si vienen como listas JSON (ej. `["Madera Pino"]` → `Madera Pino`). Si algún valor es `null`, vacío o `"null"`, ese atributo se omite por completo en la factura. Se muestran separados por espacio (ej. `Mat: madera pino Tela: Lino`) sin viñetas.
-6. **Resumen financiero**: Subtotal, monto pagado, total, saldo pendiente
+6. **Resumen financiero**: Subtotal (total de los artículos), Pagado (monto abonado si es mayor a 0) y Total debido (saldo pendiente real adeudado).
 7. **Footer**: Empresa y fecha de generación del documento
 
 ---

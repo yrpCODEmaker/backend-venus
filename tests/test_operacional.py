@@ -141,6 +141,7 @@ class TestFacturaCreate:
                 "cliente_id": "L1",
                 "total": 3500,
                 "monto_pagado": 1000,
+                "pago_parcial": 1,
                 "items": [{
                     "stock_id": "L1",
                     "catalogo_id": "L1",
@@ -362,7 +363,7 @@ class TestPagos:
         resp = await client.post(
             "/api/v1/facturas",
             json={
-                "cliente_id": "L1", "total": 5000,
+                "cliente_id": "L1", "total": 5000, "pago_parcial": 1, "monto_pagado": 0,
                 "items": [{"nombre": "Mesa", "cantidad": 1, "tipo": "encargo", "subtotal": 5000}],
             },
             headers={"Authorization": f"Bearer {user_token}"},

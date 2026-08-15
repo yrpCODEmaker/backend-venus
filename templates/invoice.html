@@ -394,18 +394,10 @@
       </tr>
       {% endif %}
 
-      {% if saldo_pendiente > 0 %}
-      <tr class="saldo-row">
-        <td colspan="2" class="totals-spacer" style="border-right:none;">&nbsp;</td>
-        <td class="total-label" style="border-left:none; border-right:none;">Saldo pendiente</td>
-        <td class="total-amount">{{ currency }}{{ "%.2f"|format(saldo_pendiente) }}</td>
-      </tr>
-      {% endif %}
-
       <tr class="total-row">
         <td colspan="2" style="border: 0.75pt solid #1a1a1a; background-color:#cccccc;">&nbsp;</td>
         <td class="total-label" style="background-color:#cccccc; border-left:none; border-right:none; font-weight:bold;">Total debido</td>
-        <td class="total-amount" style="font-weight:bold; border: 0.75pt solid #1a1a1a;">{{ currency }}{{ "%.2f"|format(total) }}</td>
+        <td class="total-amount" style="font-weight:bold; border: 0.75pt solid #1a1a1a;">{{ currency }}{{ "%.2f"|format(saldo_pendiente) }}</td>
       </tr>
     </tfoot>
   </table>
